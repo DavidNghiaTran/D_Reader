@@ -20,9 +20,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 @Service
 public class TtsService {
 
-    @Autowired
-    private EdgeTtsService edgeTtsService;
-
     private static final String GOOGLE_TTS_URL = "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=";
     private static final String CACHE_DIR = "./storage/tts_cache/";
 
@@ -47,10 +44,7 @@ public class TtsService {
             return Files.readAllBytes(cacheFile);
         }
 
-        byte[] audioData;
-        if (voice != null && (voice.equals("vi-VN-HoaiMyNeural") || voice.equals("vi-VN-NamMinhNeural"))) {
-            audioData = edgeTtsService.synthesizeSpeech(text, voice);
-        } else {
+        byte[] audioData = null;
             String targetLang = (lang == null || lang.trim().isEmpty()) ? "vi" : lang.trim();
             List<String> chunks = splitTextForTts(text, 150);
 
@@ -62,7 +56,6 @@ public class TtsService {
                 }
             }
             audioData = outputStream.toByteArray();
-        }
 
         if (audioData != null && audioData.length > 0) {
             try {

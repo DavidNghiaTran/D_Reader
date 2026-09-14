@@ -158,17 +158,40 @@ audio **mới** vừa bấm → sinh ra âm thanh lỗi/đè lên nhau/im bặt.
 phải luôn bỏ qua `err.name === 'AbortError'` trong `.catch()` của `play()` — đó là
 kết quả của việc TỰ mình ngắt phát audio (chủ động, không phải lỗi mạng/lỗi thật).
 
-### 4.5. 3 engine TTS và cách chọn
+### 4.6. Highlight câu đang đọc — phải style qua stylesheet injected vào iframe, KHÔNG dùng inline style thường
+Mỗi chương EPUB render trong 1 iframe riêng với DOM/document riêng biệt — CSS của
+trang chính (`app.css`, biến `:root { --tts-highlight-bg... }`) **không** lan vào được
+iframe đó. Đồng thời `applyRenditionTheme()` đăng ký 1 theme epub.js ép
+`background/color` của mọi `span/p/div` về giá trị đồng bộ theme bằng `!important` —
+nếu style highlight chỉ set qua `span.style.xxx = ...` (không có `!important`) thì sẽ
+bị luật theme đó đè mất, chỉ còn hiệu ứng rất mờ.
+
+**Quy tắc:** style cho `.tts-karaoke-highlight` phải nằm trong `<style>` được
+`Reader` bơm vào head của iframe qua `rendition.hooks.content.register(...)` (xem
+`loadBook()` trong `reader.js`), và mọi rule màu sắc trong đó PHẢI có `!important`.
+`tts-engine.js` chỉ cần gán `span.className = 'tts-karaoke-highlight'`, không set
+inline style màu sắc nữa.
+
+### 4.7. Lưu tiến trình đọc — luôn "flush" ngay khi có khả năng rời trang
+`Reader.debouncedSaveProgress()` (delay 3s) chỉ dùng cho lưu định kỳ trong lúc đang
+đọc. Bất kỳ nơi nào người dùng CÓ THỂ rời khỏi trang đọc (bấm nút quay lại thư viện,
+đổi tab, đóng tab/trình duyệt, load lại trang) đều phải gọi
+`Reader.flushSaveProgress()` (hủy debounce đang chờ + lưu ngay lập tức) thay vì để
+debounce tự chạy — nếu không, vài giây đọc cuối cùng trước khi rời trang có thể bị
+mất. Xem `bindUnloadSafety()` (lắng nghe `visibilitychange` + `pagehide`) và handler
+của `btnBackToLibrary` trong `reader.js` làm mẫu. `saveProgress()` luôn gọi fetch với
+`keepalive: true` để request không bị hủy giữa chừng khi trang đang unload.
+
+### 4.8. 3 engine TTS và cách chọn
 ```
 selectedVoiceUri === 'vi-VN-HoaiMyNeural' | 'vi-VN-NamMinhNeural'  -> Edge TTS (qua /api/tts, backend gọi WebSocket)
 selectedVoiceUri === 'google-vi-online'                             -> Google Translate TTS (qua /api/tts)
-selectedVoiceUri === bất kỳ giá trị nào khác (voiceURI của trình duyệt) -> Web Speech API (client-side, KHÔNG gọi backend)
 ```
 Khi thêm giọng đọc mới, phải cập nhật đồng bộ ở **cả 2 nơi**: `loadVoices()` trong
-`tts-engine.js` (danh sách hiển thị) VÀ điều kiện rẽ nhánh trong `speakSentenceQueue()`
-(logic gọi API nào).
+`tts-engine.js` (danh sách hiển thị) VÀ điều kiện rẽ nhánh (`TtsService.java` ở
+backend, `TTSEngine.isCloudVoice()` ở frontend).
 
----
+
 
 ## 5. Database Schema (tham chiếu nhanh — file gốc: `schema.sql`)
 

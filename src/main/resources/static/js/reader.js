@@ -16,7 +16,7 @@ const Reader = {
         lineHeight: 1.5,
         ttsRate: 1.0,
         ttsPitch: 1.0,
-        voiceUri: 'Google Tiếng Việt'
+        voiceUri: 'google-vi-online'
     },
 
     init() {
@@ -37,10 +37,17 @@ const Reader = {
         const btnCloseToc = document.getElementById('btnCloseToc');
 
         if (btnBack) btnBack.addEventListener('click', () => {
-            this.saveProgress();
+            this.flushSaveProgress();
             TTS.stop();
             App.switchView('libraryView');
             Library.loadBooks();
+        });
+
+        window.addEventListener('pagehide', () => this.flushSaveProgress());
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                this.flushSaveProgress();
+            }
         });
 
         if (btnToc) btnToc.addEventListener('click', (e) => {
@@ -177,6 +184,26 @@ const Reader = {
 
             // Apply font and theme styling into iframe
             this.applyRenditionTheme();
+
+            this.rendition.hooks.content.register((contents) => {
+                const style = contents.document.createElement('style');
+                style.innerHTML = `
+                    .tts-karaoke-highlight {
+                        background-color: #facc15 !important;
+                        color: #1e3a8a !important;
+                        border-radius: 4px !important;
+                        font-weight: bold !important;
+                        padding: 0 2px !important;
+                        box-shadow: 0 0 8px rgba(250, 204, 21, 0.6) !important;
+                        animation: tts-pulse-glow 2s infinite !important;
+                    }
+                    @keyframes tts-pulse-glow {
+                        0%, 100% { opacity: 1; }
+                        50% { opacity: 0.8; box-shadow: 0 0 12px rgba(250, 204, 21, 0.8) !important; }
+                    }
+                `;
+                contents.document.head.appendChild(style);
+            });
 
             // Display page (at saved CFI or start)
             const targetCfi = this.book.currentCfi && this.book.currentCfi.trim() !== '' ? this.book.currentCfi : undefined;
@@ -463,7 +490,15 @@ const Reader = {
         }, 3000);
     },
 
-    async saveProgress() {
+    flushSaveProgress() {
+        if (this.saveProgressTimeout) {
+            clearTimeout(this.saveProgressTimeout);
+            this.saveProgressTimeout = null;
+        }
+        this.saveProgress(true);
+    },
+
+    async saveProgress(isKeepalive = false) {
         if (!this.bookId || !this.currentCfi) return;
         
         let readingTimeSeconds = 0;
@@ -475,6 +510,7 @@ const Reader = {
         try {
             await fetch(`/api/progress/${this.bookId}`, {
                 method: 'PUT',
+                keepalive: isKeepalive === true,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     cfi: this.currentCfi,
@@ -482,6 +518,12 @@ const Reader = {
                     readingTimeSeconds: readingTimeSeconds
                 })
             });
+            
+            const indicator = document.getElementById('saveIndicator');
+            if (indicator) {
+                indicator.style.opacity = '1';
+                setTimeout(() => { indicator.style.opacity = '0'; }, 2000);
+            }
         } catch (e) {
             console.error('Save progress failed', e);
         }

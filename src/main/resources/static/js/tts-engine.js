@@ -106,42 +106,23 @@ const TTSEngine = {
 
         voiceSelect.innerHTML = '';
 
-        // 🌟 Edge TTS Tiếng Việt (Recommended Default)
-        const edgeHoaiMy = document.createElement('option');
-        edgeHoaiMy.value = 'vi-VN-HoaiMyNeural';
-        edgeHoaiMy.textContent = '🌟 Hoài My (Edge TTS - Nữ)';
-        voiceSelect.appendChild(edgeHoaiMy);
-
-        const edgeNamMinh = document.createElement('option');
-        edgeNamMinh.value = 'vi-VN-NamMinhNeural';
-        edgeNamMinh.textContent = '🌟 Nam Minh (Edge TTS - Nam)';
-        voiceSelect.appendChild(edgeNamMinh);
-
         // ☁️ Online Google Tiếng Việt
         const onlineOpt = document.createElement('option');
         onlineOpt.value = 'google-vi-online';
         onlineOpt.textContent = '☁️ Google Tiếng Việt (Cloud)';
         voiceSelect.appendChild(onlineOpt);
 
-        if (this.synth) {
-            this.voices = this.synth.getVoices() || [];
-            this.voices.forEach(voice => {
-                const option = document.createElement('option');
-                option.value = voice.voiceURI || voice.name;
-                option.textContent = `💻 ${voice.name} (${voice.lang})`;
-                voiceSelect.appendChild(option);
-            });
-        }
+        // Add local browser voices
 
         if (Reader.settings.voiceUri) {
             const exists = Array.from(voiceSelect.options).some(o => o.value === Reader.settings.voiceUri);
             if (exists) {
                 this.selectedVoiceUri = Reader.settings.voiceUri;
             } else {
-                this.selectedVoiceUri = 'vi-VN-HoaiMyNeural';
+                this.selectedVoiceUri = 'google-vi-online';
             }
         } else {
-            this.selectedVoiceUri = 'vi-VN-HoaiMyNeural';
+            this.selectedVoiceUri = 'google-vi-online';
         }
 
         voiceSelect.value = this.selectedVoiceUri;
@@ -635,10 +616,6 @@ const TTSEngine = {
                 if (parent && parent.nodeName !== 'SCRIPT' && parent.nodeName !== 'STYLE') {
                     const span = doc.createElement('span');
                     span.className = 'tts-karaoke-highlight';
-                    span.style.backgroundColor = 'var(--tts-highlight-bg, #fef08a)';
-                    span.style.color = 'var(--tts-highlight-text, #0f172a)';
-                    span.style.borderRadius = '3px';
-                    span.style.padding = '2px 4px';
 
                     parent.replaceChild(span, node);
                     span.appendChild(node);
