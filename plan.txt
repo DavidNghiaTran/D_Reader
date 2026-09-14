@@ -1,0 +1,35 @@
+ĐẶC TẢ YÊU CẦU HỆ THỐNG (SYSTEM SPECIFICATION) - D_READER1. TỔNG QUAN HỆ THỐNGTên dự án: D_Reader (Desktop EPUB Reader & Speech Synthesizer)Mục tiêu: Ứng dụng web cá nhân chạy cục bộ (Single-user Localhost) trên Windows, hỗ trợ tải lên, quản lý, đọc văn bản từ file .epub và chuyển văn bản thành giọng nói (TTS) bằng engine Google hoàn toàn miễn phí.Môi trường hoạt động: Windows 10/11, trình duyệt đích Google Chrome.2. KIẾN TRÚC KỸ THUẬT & CÔNG NGHỆFrontend: HTML5, CSS3 (Tailwind CSS hoặc Vanilla CSS), JavaScript (ES6+).Engine hiển thị sách: epub.js (render nội dung và điều hướng trang).Engine giọng nói (TTS): Web Speech API (window.speechSynthesis), tận dụng engine nhận dạng và tổng hợp giọng nói của Google tích hợp sẵn trên trình duyệt Chrome.Backend: Java Spring Boot (Spring Web, Spring Data JPA, Lombok).Cơ sở dữ liệu: MySQL Server cục bộ (port 3306).Lưu trữ tệp (File System): Lưu trực tiếp vào phân vùng ổ cứng Windows (ví dụ: D:/D_Reader/storage/books/ và D:/D_Reader/storage/covers/).3. ĐẶC TẢ YÊU CẦU CHỨC NĂNG (FUNCTIONAL REQUIREMENTS)Phân hệ 1: Quản lý Thư viện & Tệp EPUBTải lên sách:Tiếp nhận file có định dạng .epub, kích thước tối đa 50MB.Backend lưu tệp vào thư mục cục bộ và ghi nhận đường dẫn vào database.Bóc tách Metadata tự động:Phân tích tệp EPUB để tự động trích xuất: Tiêu đề (Title), Tác giả (Author), Mô tả tóm tắt, và ảnh bìa (Cover image).Lưu trữ ảnh bìa thành file ảnh độc lập để hiển thị dạng lưới (Grid View) ở giao diện chính.Quản lý danh mục:Liệt kê toàn bộ sách đã tải lên với ảnh bìa, tên sách, tác giả, phần trăm tiến độ đọc dở.Xóa sách: Xóa bản ghi trong MySQL đồng thời xóa file vật lý tương ứng trên ổ cứng Windows.Phân hệ 2: Trình đọc Sách (Reader Engine)Hiển thị nội dung:Dùng epub.js để render nội dung theo từng chương.Hỗ trợ điều hướng: Phím mũi tên trái/phải, nút bấm Next/Previous, mục lục (Table of Contents).Tùy biến giao diện đọc:Chế độ màu nền: Sáng (Light), Tối (Dark), Nền vàng dịu mắt (Sepia).Tùy chỉnh Font chữ (Serif, Sans-serif), cỡ chữ (12px - 28px), giãn dòng (Line height).Định vị & Lưu tiến độ:Sử dụng chuẩn tọa độ EPUB CFI (Canonical Fragment Identifier).Tự động gửi API lưu chuỗi CFI hiện tại về backend mỗi khi người dùng chuyển trang hoặc dừng đọc quá 5 giây.Phân hệ 3: Trình đọc Giọng nói (Speech Synthesis Engine)Điều khiển phát âm:Các nút điều khiển: Phát (Play), Tạm dừng (Pause), Tiếp tục (Resume), Dừng hẳn (Stop).Điều chỉnh tốc độ đọc (Rate: từ 0.5x đến 2.0x, bước nhảy 0.1x).Điều chỉnh cao độ giọng (Pitch: từ 0.8 đến 1.2).Lựa chọn giọng Google:Tự động lọc danh sách voice từ window.speechSynthesis.getVoices() để ưu tiên chọn voice: Google Tiếng Việt (mã vi-VN).Đồng bộ hóa Văn bản & Âm thanh (Karaoke/Highlight):Tách nội dung văn bản của trang hiện tại thành các câu/đoạn độc lập (Sentence Chunking).Bắt sự kiện onboundary hoặc onend của từng câu để tự động tô màu (highlight) câu đang đọc và tự động cuộn trang (Auto-scroll) theo dòng đọc.Khi đọc hết trang/chương hiện tại, tự động tải chương tiếp theo và tiếp tục đọc không gián đoạn.Tiền xử lý văn bản (Text Sanitizer):Làm sạch nội dung trước khi ném vào TTS: Loại bỏ các thẻ HTML rác, ký tự định dạng đặc biệt, dấu ..., chuyển đổi số và ký hiệu ngày tháng sang dạng chữ chuẩn tiếng Việt để tránh ngắc ngứ.4. THIẾT KẾ CƠ SỞ DỮ LIỆU (DATABASE SCHEMA)SQLCREATE DATABASE IF NOT EXISTS d_reader_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE d_reader_db;
+
+-- Bảng lưu trữ thông tin sách
+CREATE TABLE books (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    author VARCHAR(255) DEFAULT 'Chưa rõ tác giả',
+    file_path VARCHAR(500) NOT NULL,
+    cover_path VARCHAR(500) DEFAULT NULL,
+    file_size BIGINT,
+    total_chapters INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Bảng theo dõi tiến độ đọc và cài đặt đọc
+CREATE TABLE reading_progress (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    book_id BIGINT NOT NULL,
+    current_cfi VARCHAR(500) NOT NULL,
+    progress_percentage FLOAT DEFAULT 0.0,
+    last_read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_book_progress FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+
+-- Bảng cấu hình giao diện và giọng đọc cá nhân
+CREATE TABLE reader_settings (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    theme VARCHAR(50) DEFAULT 'dark',
+    font_size INT DEFAULT 16,
+    tts_rate FLOAT DEFAULT 1.0,
+    tts_pitch FLOAT DEFAULT 1.0,
+    voice_uri VARCHAR(255) DEFAULT 'Google Tiếng Việt'
+);
+5. THIẾT KẾ RESTful APIMethodEndpointChức năngPayload / QueryPOST/api/books/uploadTải file EPUB lên hệ thốngmultipart/form-data (file)GET/api/booksLấy danh sách tất cả các cuốn sách-GET/api/books/{id}Lấy chi tiết sách & đường dẫn file-DELETE/api/books/{id}Xóa sách khỏi hệ thống-GET/api/progress/{bookId}Lấy tiến độ đọc (CFI) gần nhất-PUT/api/progress/{bookId}Lưu vị trí đọc mới nhất{"cfi": "...", "percentage": 45.5}GET/api/settingsLấy cài đặt hiển thị & giọng đọc-PUT/api/settingsCập nhật cài đặt{"theme": "...", "tts_rate": 1.2}6. LUỒNG XỬ LÝ DỮ LIỆU ĐỌC & PHÁT GIỌNG NÓI (FLOW LOGIC)Khởi động: Người dùng chọn sách từ giao diện thư viện.Khởi tạo Reader: Giao diện gọi API lấy file EPUB và lấy mã current_cfi cuối cùng từ database. epub.js mở file và nhảy thẳng đến vị trí current_cfi.Bắt đầu phát:Người dùng nhấn nút Play.Script lấy đoạn văn bản (DOM text node) tại vị trí hiển thị hiện tại.Chạy qua hàm làm sạch chuỗi (loại bỏ ký tự lạ).Tạo đối tượng SpeechSynthesisUtterance(cleanedText).Gán voice Google Tiếng Việt và các thông số tốc độ.Gọi window.speechSynthesis.speak().Sự kiện chuyển câu:Lắng nghe sự kiện kết thúc câu, gỡ highlight câu cũ, highlight câu mới.Nếu hết trang, tự động kích hoạt lệnh rendition.next() của epub.js rồi trích xuất text của trang kế tiếp để đọc nối tiếp.7. KẾ HOẠCH BẢO TRÌ & GIỚI HẠN DỰ ÁNPhạm vi bảo mật: Vì chỉ chạy nội bộ trên máy cá nhân, hệ thống lược bỏ các lớp bảo mật phức tạp như Spring Security, JWT hay mã hóa mật khẩu để tối ưu tốc độ phát triển.Cơ chế lưu trữ: File được tổ chức trực tiếp tại thư mục quy định trên Windows. Khi sao lưu, chỉ cần copy thư mục dữ liệu và export file .sql từ MySQL.

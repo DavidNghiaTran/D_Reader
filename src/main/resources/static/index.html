@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D_Reader - Trình đọc EPUB & Speech Synthesizer</title>
+    
+    <!-- Google Fonts & Remix Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="/css/app.css?v=20">
+
+    <!-- EPUB.js & JSZip Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Header / Navigation Bar -->
+        <header class="app-header">
+            <div class="logo">
+                <i class="ri-book-open-fill"></i>
+                <span>D_Reader</span>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-primary" id="btnUploadModal">
+                    <i class="ri-upload-cloud-2-line"></i> Tải sách EPUB
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Library View -->
+            <section id="libraryView" class="view active">
+                <div class="section-header">
+                    <h2><i class="ri-book-shelf-line"></i> Tủ sách của bạn</h2>
+                    <div class="search-bar">
+                        <i class="ri-search-line"></i>
+                        <input type="text" id="inputSearchBook" placeholder="Tìm kiếm tên sách, tác giả...">
+                    </div>
+                    <select id="selectSortBook" class="select-control" style="margin-left: 1rem; padding: 0.5rem;">
+                        <option value="recent">Mới tải lên</option>
+                        <option value="title_asc">Tên sách (A-Z)</option>
+                        <option value="title_desc">Tên sách (Z-A)</option>
+                        <option value="progress">Tiến độ đọc</option>
+                    </select>
+                </div>
+                <div id="bookGrid" class="book-grid">
+                    <!-- Dynamic rendering of books -->
+                    <div class="loading-spinner">
+                        <i class="ri-loader-4-line ri-spin"></i> Đang tải thư viện sách...
+                    </div>
+                </div>
+            </section>
+
+            <!-- Reader View -->
+            <section id="readerView" class="view">
+                <!-- Reader Top Toolbar -->
+                <div class="reader-toolbar">
+                    <div class="toolbar-left">
+                        <button class="btn btn-secondary" id="btnBackToLibrary">
+                            <i class="ri-arrow-left-line"></i> Thư viện
+                        </button>
+                        <button class="btn btn-secondary btn-icon" id="btnToggleToc" title="Mục lục & Dấu trang">
+                            <i class="ri-list-unordered"></i>
+                        </button>
+                        <button class="btn btn-secondary btn-icon" id="btnAddBookmark" title="Thêm dấu trang (Bookmark)">
+                            <i class="ri-bookmark-add-line"></i>
+                        </button>
+                        <div class="current-book-title" id="currentBookTitle">Tiêu đề sách</div>
+                    </div>
+                    <div class="toolbar-right">
+                        <select id="selectTheme" class="select-control">
+                            <option value="dark">🌙 Tối (Dark)</option>
+                            <option value="light">☀️ Sáng (Light)</option>
+                            <option value="sepia">📜 Sepia (Vàng)</option>
+                        </select>
+                        <select id="selectFont" class="select-control">
+                            <option value="sans-serif">Sans-serif</option>
+                            <option value="serif">Serif</option>
+                        </select>
+                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                            <button class="btn btn-secondary btn-icon" id="btnFontLess"><i class="ri-subtract-line"></i></button>
+                            <span id="fontSizeDisplay" style="font-size: 0.85rem; font-weight: 600; min-width: 40px; text-align: center;">16px</span>
+                            <button class="btn btn-secondary btn-icon" id="btnFontMore"><i class="ri-add-line"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Reader Main Body -->
+                <div class="reader-body">
+                    <!-- TOC Sidebar -->
+                    <aside class="toc-sidebar" id="tocSidebar">
+                        <div class="toc-sidebar-header">
+                            <h4><i class="ri-list-unordered"></i> Mục lục sách</h4>
+                            <button class="btn-close-toc" id="btnCloseToc" title="Đóng mục lục"><i class="ri-close-line"></i></button>
+                        </div>
+                        <ul class="toc-list" id="tocList"></ul>
+                        <div class="toc-sidebar-header" style="margin-top: 1rem; border-top: 1px solid var(--border);">
+                            <h4><i class="ri-bookmark-line"></i> Dấu trang (Bookmarks)</h4>
+                        </div>
+                        <ul class="toc-list" id="bookmarkList"></ul>
+                    </aside>
+                    </aside>
+
+                    <!-- EPUB Viewer -->
+                    <div class="epub-viewer-wrapper">
+                        <button class="nav-btn prev" id="prevPageBtn"><i class="ri-arrow-left-s-line"></i></button>
+                        <div id="viewer"></div>
+                        <button class="nav-btn next" id="nextPageBtn"><i class="ri-arrow-right-s-line"></i></button>
+                    </div>
+                </div>
+
+            </section>
+        </main>
+
+        <!-- TTS Fixed Bottom Bar (always visible in reader mode) -->
+        <div class="tts-bar" id="ttsBar" style="display:none;">
+            <div class="tts-controls">
+                <button class="tts-btn tts-btn-play" id="btnTtsPlay" title="Phát/Tạm dừng">
+                    <i class="ri-play-fill"></i>
+                </button>
+                <button class="tts-btn" id="btnTtsStop" title="Dừng đọc (Stop)">
+                    <i class="ri-stop-fill"></i>
+                </button>
+                <div class="tts-status" id="ttsStatus">Sẵn sàng</div>
+            </div>
+
+            <div class="tts-settings">
+                <div class="setting-item">
+                    <i class="ri-user-voice-line"></i>
+                    <select id="selectVoice" class="select-control" style="max-width: 200px;">
+                        <option>Đang tải danh sách giọng...</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <span>Tốc độ:</span>
+                    <input type="range" id="inputTtsRate" min="0.5" max="4.0" step="0.1" value="1.0">
+                    <span id="ttsRateDisplay" style="font-weight: 600; min-width: 36px;">1.0x</span>
+                    <div class="speed-presets">
+                        <button class="speed-btn" data-speed="1.0">1x</button>
+                        <button class="speed-btn" data-speed="1.5">1.5x</button>
+                        <button class="speed-btn" data-speed="2.0">2x</button>
+                        <button class="speed-btn" data-speed="3.0">3x</button>
+                        <button class="speed-btn" data-speed="4.0">4x</button>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <span>Cao độ:</span>
+                    <input type="range" id="inputTtsPitch" min="0.8" max="1.2" step="0.05" value="1.0">
+                    <span id="ttsPitchDisplay" style="font-weight: 600;">1.0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Upload -->
+        <div class="modal-overlay" id="uploadModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Tải sách EPUB mới</h3>
+                    <button class="btn-close" id="btnCloseModal"><i class="ri-close-line"></i></button>
+                </div>
+                <div class="modal-body">
+                    <div class="dropzone" id="dropzone">
+                        <i class="ri-file-upload-line"></i>
+                        <p>Kéo và thả tệp .epub vào đây hoặc <strong>Bấm để chọn tệp</strong></p>
+                        <input type="file" id="fileInput" accept=".epub" hidden>
+                    </div>
+                    <div id="uploadProgress" class="progress-bar-container" style="display: none;">
+                        <div class="progress-bar" id="progressBar"></div>
+                    </div>
+                    <div id="uploadStatus" class="upload-status"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Delete -->
+        <div class="modal-overlay" id="deleteModal">
+            <div class="modal-content" style="max-width: 400px; text-align: center;">
+                <div class="modal-body" style="padding: 2rem;">
+                    <i class="ri-error-warning-line" style="font-size: 3rem; color: var(--danger); margin-bottom: 1rem;"></i>
+                    <h3 style="margin-bottom: 1rem;">Xác nhận xóa sách</h3>
+                    <p id="deleteModalText" style="margin-bottom: 2rem; color: var(--text-muted);">Bạn có chắc muốn xóa sách này không?</p>
+                    <div style="display: flex; gap: 1rem; justify-content: center;">
+                        <button class="btn btn-secondary" id="btnCancelDelete">Hủy</button>
+                        <button class="btn btn-danger" id="btnConfirmDelete">Xóa ngay</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- JS Application Scripts -->
+    <script src="/js/app.js?v=20"></script>
+    <script src="/js/tts-engine.js?v=20"></script>
+    <script src="/js/library.js?v=20"></script>
+    <script src="/js/reader.js?v=20"></script>
+</body>
+</html>
