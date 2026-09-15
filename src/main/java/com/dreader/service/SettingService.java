@@ -22,6 +22,7 @@ public class SettingService {
             s.setLineHeight(1.6f);
             s.setTtsRate(1.0f);
             s.setTtsPitch(1.0f);
+            s.setTtsVolume(1.0f);
             s.setVoiceUri("google-vi-online");
             s.setVoiceName("Google Tiếng Việt");
             s.setVoiceLang("vi-VN");
@@ -41,6 +42,7 @@ public class SettingService {
         if (input.getLineHeight() != null) existing.setLineHeight(input.getLineHeight());
         if (input.getTtsRate() != null) existing.setTtsRate(input.getTtsRate());
         if (input.getTtsPitch() != null) existing.setTtsPitch(input.getTtsPitch());
+        if (input.getTtsVolume() != null) existing.setTtsVolume(input.getTtsVolume());
         if (input.getVoiceUri() != null) existing.setVoiceUri(input.getVoiceUri());
         if (input.getVoiceName() != null) existing.setVoiceName(input.getVoiceName());
         if (input.getVoiceLang() != null) existing.setVoiceLang(input.getVoiceLang());

@@ -187,11 +187,10 @@ của `btnBackToLibrary` trong `reader.js` làm mẫu. `saveProgress()` luôn g�
 selectedVoiceUri === 'vi-VN-HoaiMyNeural' | 'vi-VN-NamMinhNeural'  -> Edge TTS (qua /api/tts, backend gọi WebSocket)
 selectedVoiceUri === 'google-vi-online'                             -> Google Translate TTS (qua /api/tts)
 ```
-Khi thêm giọng đọc mới, phải cập nhật đồng bộ ở **cả 2 nơi**: `loadVoices()` trong
-`tts-engine.js` (danh sách hiển thị) VÀ điều kiện rẽ nhánh (`TtsService.java` ở
-backend, `TTSEngine.isCloudVoice()` ở frontend).
-
-
+### 4.12. Xử lý câu cho TTS & tránh đọc thành lời dấu câu (., ...)
+1. Loại bỏ ngoặc kép, nháy đơn (`"`, `“`, `”`, `‘`, `’`...), chuẩn hoá ba chấm `…` trong `sanitizeText()`.
+2. Không escape thừa `&quot;`, `&apos;` trong XML/SSML nếu dùng Edge TTS.
+3. **Bộ lọc 2 lớp cho câu chỉ chứa dấu câu:** bất kỳ "câu" nào sau khi làm sạch mà không còn chữ hoặc số nào (`!/[\p{L}\p{N}]/u.test(s.clean)`) sẽ bị loại bỏ hoàn toàn, không gửi cho bất kỳ engine TTS nào (Edge/Google/FPT/giọng máy) — chỉ lặng lẽ bỏ qua (Lớp 1: `.filter(s => /[\p{L}\p{N}]/u.test(s.clean))` khi tạo danh sách câu; Lớp 2: lưới an toàn dự phòng ngay trong `speakSentenceQueue()`), tránh tình trạng TTS đọc thành tên ký tự ("chấm chấm chấm") khi gặp thoại im lặng "..." hoặc chỉ toàn dấu câu.
 
 ## 5. Database Schema (tham chiếu nhanh — file gốc: `schema.sql`)
 

@@ -74,3 +74,4 @@ Sau khi Spring Boot khởi động thành công (báo hiệu Tomcat started on p
 - **Bảo mật:** Vá lỗ hổng XML External Entity (XXE) trong trình phân tích `EpubParser.java`.
 - **UI/UX:** Tối ưu hóa TOC sidebar push-content. Sửa lỗi nhảy DOM và trôi text khi Highlight bằng Mutex Lock và `TreeWalker` cải tiến.
 - **Click-to-read:** Cập nhật tính năng nhận diện đoạn text được click bằng `caretPositionFromPoint` và `caretRangeFromPoint`.
+Bổ sung nhạc nền

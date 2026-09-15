@@ -87,6 +87,48 @@ const TTSEngine = {
                 Reader.saveSettings();
             });
         }
+
+        const volumeInput = document.getElementById('inputTtsVolume');
+        if (volumeInput) {
+            volumeInput.addEventListener('input', (e) => {
+                const volume = parseFloat(e.target.value);
+                const display = document.getElementById('ttsVolumeDisplay');
+                if (display) display.textContent = `${Math.round(volume * 100)}%`;
+                Reader.settings.ttsVolume = volume;
+                Reader.saveSettings();
+                if (this.audioPlayer) {
+                    this.audioPlayer.volume = volume; // áp dụng ngay cả khi đang phát dở
+                }
+            });
+        }
+    },
+
+    syncControlsFromSettings() {
+        const rateInput = document.getElementById('inputTtsRate');
+        if (rateInput && Reader.settings.ttsRate != null) {
+            rateInput.value = Reader.settings.ttsRate;
+            const d = document.getElementById('ttsRateDisplay');
+            if (d) d.textContent = `${Reader.settings.ttsRate.toFixed(1)}x`;
+            this.updateSpeedButtons(Reader.settings.ttsRate);
+        }
+
+        const pitchInput = document.getElementById('inputTtsPitch');
+        if (pitchInput && Reader.settings.ttsPitch != null) {
+            pitchInput.value = Reader.settings.ttsPitch;
+            const d = document.getElementById('ttsPitchDisplay');
+            if (d) d.textContent = `${Reader.settings.ttsPitch.toFixed(1)}`;
+        }
+
+        const volumeInput = document.getElementById('inputTtsVolume');
+        const volume = Reader.settings.ttsVolume != null ? Reader.settings.ttsVolume : 1.0;
+        if (volumeInput) {
+            volumeInput.value = volume;
+            const d = document.getElementById('ttsVolumeDisplay');
+            if (d) d.textContent = `${Math.round(volume * 100)}%`;
+        }
+        if (this.audioPlayer) {
+            this.audioPlayer.volume = volume;
+        }
     },
 
     updateSpeedButtons(currentRate) {
@@ -161,7 +203,7 @@ const TTSEngine = {
                 id: idx,
                 raw: s,
                 clean: this.sanitizeText(s)
-            }));
+            })).filter(s => /[\p{L}\p{N}]/u.test(s.clean));
 
             this.lastHighlightNode = null;
             
@@ -241,17 +283,20 @@ const TTSEngine = {
                 this.setStatus('LOADING');
                 this.updateStatusText('Tự động chuyển trang...');
                 if (Reader.rendition) {
-                    const hrefBefore = Reader.currentHref;
-                    Reader.nextPage(true).then(() => {
+                    Reader.nextChapter(true).then((success) => {
                         this.isTurningPage = false;
                         if (this.status !== 'LOADING') return;
-                        if (Reader.currentHref === hrefBefore) {
-                            // không sang chương mới được -> đã hết truyện
+                        if (!success) {
+                            // không có chương mới -> đã hết truyện
                             this.stop();
                             this.updateStatusText('Đã đọc hết truyện');
                             return;
                         }
-                        this.start();
+                        
+                        // Chờ một chút để sự kiện relocated cập nhật xong Reader.currentHref
+                        setTimeout(() => {
+                            this.start();
+                        }, 300);
                     }).catch(err => {
                         console.error('Error turning page', err);
                         this.stop();
@@ -268,7 +313,7 @@ const TTSEngine = {
         const sentenceObj = this.sentences[this.currentIndex];
         const cleanedText = sentenceObj.clean;
 
-        if (!cleanedText || cleanedText.trim() === '') {
+        if (!cleanedText || !/[\p{L}\p{N}]/u.test(cleanedText)) {
             this.currentIndex++;
             this.speakSentenceQueue();
             return;
@@ -283,8 +328,10 @@ const TTSEngine = {
 
         const rateInput = document.getElementById('inputTtsRate');
         const pitchInput = document.getElementById('inputTtsPitch');
+        const volumeInput = document.getElementById('inputTtsVolume');
         const rate = rateInput ? parseFloat(rateInput.value) : (Reader.settings.ttsRate || 1.0);
         const pitch = pitchInput ? parseFloat(pitchInput.value) : (Reader.settings.ttsPitch || 1.0);
+        const volume = volumeInput ? parseFloat(volumeInput.value) : (Reader.settings.ttsVolume != null ? Reader.settings.ttsVolume : 1.0);
 
         const currentPlayToken = this.playToken;
 
@@ -307,6 +354,7 @@ const TTSEngine = {
             }
             
             this.audioPlayer.playbackRate = rate;
+            this.audioPlayer.volume = volume;
 
             this.audioPlayer.onended = () => {
                 if (this.playToken !== currentPlayToken) return;
@@ -335,6 +383,7 @@ const TTSEngine = {
                 // Fallback to local TTS
                 if (this.synth) {
                     console.log('Falling back to local TTS engine');
+                    this.updateStatusText('Giọng online bị gián đoạn (có thể do giới hạn tần suất truy cập sau khi đọc lâu) - đang chuyển sang giọng máy tạm thời...');
                     this.selectedVoiceUri = ''; // clear to trigger local fallback
                     this.speakSentenceQueue();
                     return;
@@ -353,7 +402,7 @@ const TTSEngine = {
                     // PREFETCH N+1 while N is playing
                     if (this.currentIndex + 1 < this.sentences.length) {
                         const nextSentence = this.sentences[this.currentIndex + 1].clean;
-                        if (nextSentence && nextSentence.trim() !== '') {
+                        if (nextSentence && /[\p{L}\p{N}]/u.test(nextSentence)) {
                             this.nextAudioPlayer.src = getAudioUrl(nextSentence);
                             this.nextAudioPlayer.load(); // Load in background
                         }
@@ -365,6 +414,7 @@ const TTSEngine = {
                     console.error('Play promise error', err);
                     if (this.synth) {
                         console.log('Falling back to local TTS engine');
+                        this.updateStatusText('Giọng online bị gián đoạn (có thể do giới hạn tần suất truy cập sau khi đọc lâu) - đang chuyển sang giọng máy tạm thời...');
                         this.selectedVoiceUri = ''; 
                         this.speakSentenceQueue();
                         return;
@@ -385,6 +435,7 @@ const TTSEngine = {
             utterance.lang = 'vi-VN';
             utterance.rate = rate;
             utterance.pitch = pitch;
+            utterance.volume = volume;
 
             const voice = this.voices.find(v => (v.voiceURI || v.name) === this.selectedVoiceUri);
             if (voice) utterance.voice = voice;
@@ -547,27 +598,22 @@ const TTSEngine = {
         if (!text) return '';
         let cleaned = text;
         cleaned = cleaned.replace(/<[^>]*>?/gm, '');
-        cleaned = cleaned.replace(/\.{2,}/g, '.');
-        cleaned = cleaned.replace(/[\*\_\#\~\`\^]/g, '');
-        
-        // Vietnamese Text Normalization
-        // Normalize dates (e.g. 20/11/2024 -> 20 tháng 11 năm 2024)
-        cleaned = cleaned.replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, '$1 tháng $2 năm $3');
-        cleaned = cleaned.replace(/\b(\d{1,2})\/(\d{1,2})\b/g, '$1 tháng $2');
-        
-        // Normalize abbreviations
-        cleaned = cleaned.replace(/\bTS\.\s/g, 'Tiến sĩ ');
-        cleaned = cleaned.replace(/\bThS\.\s/g, 'Thạc sĩ ');
-        cleaned = cleaned.replace(/\bGS\.\s/g, 'Giáo sư ');
-        cleaned = cleaned.replace(/\bPGS\.\s/g, 'Phó giáo sư ');
-        cleaned = cleaned.replace(/\bBS\.\s/g, 'Bác sĩ ');
-        cleaned = cleaned.replace(/\bTP\.\s/g, 'Thành phố ');
-        cleaned = cleaned.replace(/\bQ\.\s/g, 'Quận ');
-        
-        // Currency
-        cleaned = cleaned.replace(/\b(\d+[\d\.\,]*)\s*đ\b/gi, '$1 đồng');
-        cleaned = cleaned.replace(/\b(\d+[\d\.\,]*)\s*vnđ\b/gi, '$1 Việt Nam đồng');
 
+        // Bỏ hẳn dấu ngoặc kép/nháy đơn kiểu chữ - không cần đọc thành lời,
+        // và là nguyên nhân phổ biến nhất gây lỗi khi đứng sát dấu chấm/phẩy
+        // lúc đóng lời thoại (`."`, `,"` rất hay gặp trong truyện).
+        cleaned = cleaned.replace(/["“”‘’„‟«»]/g, '');
+
+        // Dấu ba chấm 1 ký tự "…" -> dấu chấm thường
+        cleaned = cleaned.replace(/…/g, '.');
+
+        cleaned = cleaned.replace(/\.{2,}/g, '.');
+        // Gộp các cụm dấu câu lặp liền nhau (!!, ??, ,,...) về 1 dấu
+        cleaned = cleaned.replace(/([!?,;:])\1+/g, '$1');
+        // Bỏ khoảng trắng thừa ngay trước dấu câu (phát sinh sau khi xoá dấu ngoặc kép)
+        cleaned = cleaned.replace(/\s+([.,!?;:])/g, '$1');
+
+        cleaned = cleaned.replace(/[\*\_\#\~\`\^]/g, '');
         cleaned = cleaned.replace(/\s+/g, ' ').trim();
         return cleaned;
     },

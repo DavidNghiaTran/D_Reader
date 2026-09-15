@@ -88,6 +88,10 @@ public class TtsService {
     }
 
     private byte[] fetchTtsAudioChunk(String chunk, String lang) throws Exception {
+        return fetchTtsAudioChunkInternal(chunk, lang, 1);
+    }
+
+    private byte[] fetchTtsAudioChunkInternal(String chunk, String lang, int retryCount) throws Exception {
         String encodedText = URLEncoder.encode(chunk, StandardCharsets.UTF_8.toString());
         String fullUrlStr = GOOGLE_TTS_URL + lang + "&q=" + encodedText;
 
@@ -101,6 +105,11 @@ public class TtsService {
 
         int responseCode = conn.getResponseCode();
         if (responseCode != HttpURLConnection.HTTP_OK) {
+            if (retryCount > 0) {
+                System.err.println("Google TTS returned HTTP " + responseCode + ". Retrying...");
+                Thread.sleep(1000);
+                return fetchTtsAudioChunkInternal(chunk, lang, retryCount - 1);
+            }
             throw new RuntimeException("Google TTS returned HTTP status: " + responseCode);
         }
 
@@ -111,7 +120,20 @@ public class TtsService {
             while ((nRead = inputStream.read(data, 0, data.length)) != -1) {
                 buffer.write(data, 0, nRead);
             }
-            return buffer.toByteArray();
+            byte[] audioData = buffer.toByteArray();
+            
+            // Heuristic for rate limit (audio too small compared to text)
+            int minExpectedSize = Math.min(2000, chunk.length() * 30);
+            if (chunk.length() > 10 && audioData.length < minExpectedSize) {
+                if (retryCount > 0) {
+                    System.err.println("TTS Audio suspiciously small (" + audioData.length + " bytes) for text length " + chunk.length() + ". Likely rate limited. Retrying...");
+                    Thread.sleep(1500);
+                    return fetchTtsAudioChunkInternal(chunk, lang, retryCount - 1);
+                }
+                throw new RuntimeException("TTS Audio is too small, likely rate limited.");
+            }
+            
+            return audioData;
         } finally {
             conn.disconnect();
         }

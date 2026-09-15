@@ -16,6 +16,7 @@ const Reader = {
         lineHeight: 1.5,
         ttsRate: 1.0,
         ttsPitch: 1.0,
+        ttsVolume: 1.0,
         voiceUri: 'google-vi-online'
     },
 
@@ -127,6 +128,10 @@ const Reader = {
 
         const fontSelect = document.getElementById('selectFont');
         if (fontSelect) fontSelect.value = this.settings.fontFamily || 'sans-serif';
+
+        if (typeof TTSEngine !== 'undefined' && TTSEngine.syncControlsFromSettings) {
+            TTSEngine.syncControlsFromSettings();
+        }
     },
 
     async saveSettings() {
@@ -139,6 +144,7 @@ const Reader = {
                     fontSize: this.settings.fontSize,
                     ttsRate: this.settings.ttsRate,
                     ttsPitch: this.settings.ttsPitch,
+                    ttsVolume: this.settings.ttsVolume,
                     voiceUri: this.settings.voiceUri
                 })
             });
@@ -469,6 +475,33 @@ const Reader = {
                 this.isTtsNavigating = false;
             }
         });
+    },
+
+    nextChapter(fromTts = false) {
+        if (!this.rendition || !this.bookData) return Promise.resolve(false);
+        if (fromTts === true) {
+            this.isTtsNavigating = true;
+        }
+        
+        const loc = this.rendition.currentLocation();
+        if (loc && loc.start && typeof loc.start.index !== 'undefined') {
+            const nextIndex = loc.start.index + 1;
+            const spineItem = this.bookData.spine.get(nextIndex);
+            if (spineItem) {
+                return Promise.resolve(this.rendition.display(spineItem.href)).then(() => {
+                    return true;
+                }).finally(() => {
+                    if (fromTts === true) {
+                        this.isTtsNavigating = false;
+                    }
+                });
+            }
+        }
+        
+        if (fromTts === true) {
+            this.isTtsNavigating = false;
+        }
+        return Promise.resolve(false);
     },
 
     updateProgressFromLocation() {

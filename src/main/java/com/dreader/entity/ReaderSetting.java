@@ -28,6 +28,9 @@ public class ReaderSetting {
     @Column(name = "tts_pitch")
     private Float ttsPitch = 1.0f;
 
+    @Column(name = "tts_volume")
+    private Float ttsVolume = 1.0f;
+
     @Column(name = "voice_uri", length = 500)
     private String voiceUri = "google-vi-online";
 
@@ -71,6 +74,9 @@ public class ReaderSetting {
 
     public Float getTtsPitch() { return ttsPitch; }
     public void setTtsPitch(Float ttsPitch) { this.ttsPitch = ttsPitch; }
+
+    public Float getTtsVolume() { return ttsVolume; }
+    public void setTtsVolume(Float ttsVolume) { this.ttsVolume = ttsVolume; }
 
     public String getVoiceUri() { return voiceUri; }
     public void setVoiceUri(String voiceUri) { this.voiceUri = voiceUri; }
