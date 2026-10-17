@@ -32,5 +32,7 @@ build/
 ### VS Code ###
 .vscode/
 
-### D_Reader Storage Cache ###
+### D_Reader Storage - Exclude binary user data from Git ###
 storage/tts_cache/
+storage/books/
+storage/covers/

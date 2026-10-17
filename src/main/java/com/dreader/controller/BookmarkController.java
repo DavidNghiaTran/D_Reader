@@ -1,10 +1,7 @@
 package com.dreader.controller;
 
-import com.dreader.entity.Book;
-import com.dreader.entity.Bookmark;
-import com.dreader.exception.BookNotFoundException;
-import com.dreader.repository.BookRepository;
-import com.dreader.repository.BookmarkRepository;
+import com.dreader.dto.BookmarkDto;
+import com.dreader.service.BookmarkService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,34 +14,26 @@ import java.util.Map;
 public class BookmarkController {
 
     @Autowired
-    private BookmarkRepository bookmarkRepository;
-
-    @Autowired
-    private BookRepository bookRepository;
+    private BookmarkService bookmarkService;
 
     @GetMapping("/book/{bookId}")
-    public ResponseEntity<List<Bookmark>> getBookmarksByBook(@PathVariable Long bookId) {
-        return ResponseEntity.ok(bookmarkRepository.findByBookId(bookId));
+    public ResponseEntity<List<BookmarkDto>> getBookmarksByBook(@PathVariable Long bookId) {
+        return ResponseEntity.ok(bookmarkService.getBookmarksByBookId(bookId));
     }
 
     @PostMapping
     public ResponseEntity<?> addBookmark(@RequestBody Map<String, Object> payload) {
         try {
             Long bookId = Long.parseLong(payload.get("bookId").toString());
-            String name = payload.get("name").toString();
+            String name = payload.getOrDefault("name", "Dấu trang").toString();
             String cfi = payload.get("cfi").toString();
             String chapterTitle = payload.getOrDefault("chapterTitle", "").toString();
+            String selectedText = payload.containsKey("selectedText") ? payload.get("selectedText").toString() : null;
+            String note = payload.containsKey("note") ? payload.get("note").toString() : null;
+            String color = payload.getOrDefault("color", "yellow").toString();
 
-            Book book = bookRepository.findById(bookId)
-                    .orElseThrow(() -> new BookNotFoundException("Book not found"));
-
-            Bookmark bookmark = new Bookmark();
-            bookmark.setBook(book);
-            bookmark.setName(name);
-            bookmark.setCfi(cfi);
-            bookmark.setChapterTitle(chapterTitle);
-
-            return ResponseEntity.ok(bookmarkRepository.save(bookmark));
+            BookmarkDto dto = bookmarkService.addBookmark(bookId, name, cfi, chapterTitle, selectedText, note, color);
+            return ResponseEntity.ok(dto);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
@@ -52,7 +41,7 @@ public class BookmarkController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteBookmark(@PathVariable Long id) {
-        bookmarkRepository.deleteById(id);
+        bookmarkService.deleteBookmark(id);
         return ResponseEntity.ok().build();
     }
 }

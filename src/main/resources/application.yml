@@ -25,8 +25,16 @@ spring:
     multipart:
       max-file-size: 50MB
       max-request-size: 50MB
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
 
 storage:
   location:
     books: ./storage/books
     covers: ./storage/covers
+
+vieneu:
+  tts:
+    base-url: http://localhost:8001

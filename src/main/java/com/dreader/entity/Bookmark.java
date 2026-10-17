@@ -1,7 +1,9 @@
 package com.dreader.entity;
 
 import jakarta.persistence.*;
+
 @Entity
+@Table(name = "bookmarks")
 public class Bookmark {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -14,10 +16,20 @@ public class Bookmark {
     @Column(nullable = false)
     private String name;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String cfi;
-    
+
+    @Column(name = "chapter_title", length = 255)
     private String chapterTitle;
+
+    @Column(name = "selected_text", columnDefinition = "TEXT")
+    private String selectedText;
+
+    @Column(columnDefinition = "TEXT")
+    private String note;
+
+    @Column(length = 20)
+    private String color = "yellow";
 
     public Bookmark() {}
 
@@ -35,4 +47,13 @@ public class Bookmark {
 
     public String getChapterTitle() { return chapterTitle; }
     public void setChapterTitle(String chapterTitle) { this.chapterTitle = chapterTitle; }
+
+    public String getSelectedText() { return selectedText; }
+    public void setSelectedText(String selectedText) { this.selectedText = selectedText; }
+
+    public String getNote() { return note; }
+    public void setNote(String note) { this.note = note; }
+
+    public String getColor() { return color; }
+    public void setColor(String color) { this.color = color; }
 }

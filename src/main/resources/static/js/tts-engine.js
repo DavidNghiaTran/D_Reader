@@ -9,22 +9,36 @@ const TTSEngine = {
     currentIndex: 0,
     isTurningPage: false,
     playToken: 0,
-    
+
     // Audio Providers
-    audioPlayer: null, // HTML5 Audio for Online Cloud Engine
-    nextAudioPlayer: null, // For Double Buffering (Prefetch)
+    audioPlayer: null, // HTML5 Audio for Google Cloud TTS
+    nextAudioPlayer: null,
     synth: window.speechSynthesis,
     voices: [],
     selectedVoiceUri: 'google-vi-online',
+
+    // Web Audio API for VieNeu Realtime Streaming
+    audioCtx: null,
+    gainNode: null,
+    activeSources: [],
+    currentStreamReader: null,
+    playHead: 0,
+    streamSentenceTimer: null,
 
     // Highlight tracking
     highlightElement: null,
     lastHighlightNode: null,
     errorCount: 0,
 
+    // Sleep Timer
+    sleepTimerTimeout: null,
+    sleepTimerMinutes: 0,
+    sleepAfterChapter: false,
+
     init() {
         this.audioPlayer = new Audio();
         this.nextAudioPlayer = new Audio();
+        this.nextAudioPlayer.onerror = () => {}; // Tránh log lỗi khi prefetch câu sau ở chế độ nền
 
         this.bindEvents();
         this.loadVoices();
@@ -32,19 +46,68 @@ const TTSEngine = {
         if (this.synth && this.synth.onvoiceschanged !== undefined) {
             this.synth.onvoiceschanged = () => this.loadVoices();
         }
+
+        // Đảm bảo AudioContext không bị suspend khi tab quay lại hoạt động
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && this.audioCtx && this.audioCtx.state === 'suspended' && this.status === 'PLAYING') {
+                this.audioCtx.resume();
+            }
+        });
+    },
+
+    initAudioContext() {
+        if (!this.audioCtx) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextClass) {
+                this.audioCtx = new AudioContextClass();
+                this.gainNode = this.audioCtx.createGain();
+                this.gainNode.connect(this.audioCtx.destination);
+                const volume = Reader.settings.ttsVolume != null ? Reader.settings.ttsVolume : 1.0;
+                this.gainNode.gain.value = volume;
+            }
+        }
+        if (this.audioCtx && this.audioCtx.state === 'suspended') {
+            this.audioCtx.resume();
+        }
     },
 
     bindEvents() {
         const btnPlay = document.getElementById('btnTtsPlay');
-        const btnPause = document.getElementById('btnTtsPause');
         const btnStop = document.getElementById('btnTtsStop');
         const voiceSelect = document.getElementById('selectVoice');
         const rateInput = document.getElementById('inputTtsRate');
         const pitchInput = document.getElementById('inputTtsPitch');
 
-        if (btnPlay) btnPlay.addEventListener('click', () => this.togglePlayPause());
-        if (btnPause) btnPause.addEventListener('click', () => this.pause());
+        if (btnPlay) {
+            btnPlay.addEventListener('click', () => {
+                this.initAudioContext();
+                this.togglePlayPause();
+            });
+        }
         if (btnStop) btnStop.addEventListener('click', () => this.stop());
+
+        // Prev / Next sentence
+        document.getElementById('btnTtsPrevSentence')?.addEventListener('click', () => this.prevParagraph());
+        document.getElementById('btnTtsNextSentence')?.addEventListener('click', () => this.nextParagraph());
+
+        // Sleep Timer
+        const sleepBtn = document.getElementById('btnSleepTimer');
+        const sleepDropdown = document.getElementById('sleepTimerDropdown');
+        if (sleepBtn && sleepDropdown) {
+            sleepBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                sleepDropdown.classList.toggle('open');
+            });
+            document.addEventListener('click', () => sleepDropdown.classList.remove('open'));
+            document.querySelectorAll('.sleep-timer-option').forEach(opt => {
+                opt.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const minutes = opt.dataset.minutes;
+                    this.setSleepTimer(minutes);
+                    sleepDropdown.classList.remove('open');
+                });
+            });
+        }
 
         if (voiceSelect) {
             voiceSelect.addEventListener('change', (e) => {
@@ -63,6 +126,9 @@ const TTSEngine = {
                 Reader.saveSettings();
                 if (this.audioPlayer) {
                     this.audioPlayer.playbackRate = rate;
+                }
+                for (const src of this.activeSources) {
+                    try { src.playbackRate.value = rate; } catch (err) {}
                 }
                 this.updateSpeedButtons(rate);
             });
@@ -97,7 +163,10 @@ const TTSEngine = {
                 Reader.settings.ttsVolume = volume;
                 Reader.saveSettings();
                 if (this.audioPlayer) {
-                    this.audioPlayer.volume = volume; // áp dụng ngay cả khi đang phát dở
+                    this.audioPlayer.volume = volume;
+                }
+                if (this.gainNode) {
+                    this.gainNode.gain.value = volume;
                 }
             });
         }
@@ -129,6 +198,9 @@ const TTSEngine = {
         if (this.audioPlayer) {
             this.audioPlayer.volume = volume;
         }
+        if (this.gainNode) {
+            this.gainNode.gain.value = volume;
+        }
     },
 
     updateSpeedButtons(currentRate) {
@@ -154,7 +226,25 @@ const TTSEngine = {
         onlineOpt.textContent = '☁️ Google Tiếng Việt (Cloud)';
         voiceSelect.appendChild(onlineOpt);
 
-        // Add local browser voices
+        const vieneuVoices = {
+            "Khuyến nghị": ["Minh Quân Pro", "Mai Anh", "Adam bựa", "Trúc Ly", "Anh Khôi", "Thùy Dung", "Thiền Tâm Đức", "Ngọc Huyền", "Quang Sơn", "Ngọc Trân"],
+            "Miền Bắc": ["Minh Đức", "Phạm Tuyên", "Xuân Vĩnh", "Thanh Bình", "Ngọc Linh", "Đoan Trang", "Quỳnh Anh", "Mạnh Dũng"],
+            "Miền Trung": ["Quang Sơn", "Ngọc Trân"],
+            "Miền Nam": ["Adam", "Thái Sơn", "Thục Đoan", "Minh Triết", "Mỹ Duyên", "Đức Trí", "Kim Thanh", "Thùy Dung"]
+        };
+        
+        for (const group in vieneuVoices) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = `⚡ VieNeu-TTS (Streaming): ${group}`;
+            
+            for (const voiceName of vieneuVoices[group]) {
+                const opt = document.createElement('option');
+                opt.value = `vi-VN-${voiceName}`;
+                opt.textContent = voiceName;
+                optgroup.appendChild(opt);
+            }
+            voiceSelect.appendChild(optgroup);
+        }
 
         if (Reader.settings.voiceUri) {
             const exists = Array.from(voiceSelect.options).some(o => o.value === Reader.settings.voiceUri);
@@ -180,8 +270,101 @@ const TTSEngine = {
         }
     },
 
+    /** Jump to previous sentence */
+    prevParagraph() {
+        if (this.sentences.length === 0) return;
+        this.currentIndex = Math.max(0, this.currentIndex - 2);
+        if (this.status === 'PLAYING') {
+            this.stopCurrentStream();
+            if (this.audioPlayer) { this.audioPlayer.pause(); this.audioPlayer.removeAttribute('src'); }
+            if (this.synth) this.synth.cancel();
+            this.playToken++;
+            this.speakSentenceQueue();
+        }
+    },
+
+    /** Jump to next sentence */
+    nextParagraph() {
+        if (this.sentences.length === 0) return;
+        this.currentIndex = Math.min(this.sentences.length - 1, this.currentIndex + 1);
+        if (this.status === 'PLAYING') {
+            this.stopCurrentStream();
+            if (this.audioPlayer) { this.audioPlayer.pause(); this.audioPlayer.removeAttribute('src'); }
+            if (this.synth) this.synth.cancel();
+            this.playToken++;
+            this.speakSentenceQueue();
+        }
+    },
+
+    /** Sleep Timer — fade out & stop after given minutes */
+    setSleepTimer(minutesOrMode) {
+        // Clear existing timer
+        if (this.sleepTimerTimeout) {
+            clearTimeout(this.sleepTimerTimeout);
+            this.sleepTimerTimeout = null;
+        }
+        this.sleepAfterChapter = false;
+
+        const label = document.getElementById('sleepTimerLabel');
+        const btn = document.getElementById('btnSleepTimer');
+
+        if (minutesOrMode === '0' || minutesOrMode === 0) {
+            if (label) label.textContent = 'Hẹn giờ';
+            btn?.classList.remove('active');
+            return;
+        }
+
+        if (minutesOrMode === 'chapter') {
+            this.sleepAfterChapter = true;
+            if (label) label.textContent = 'Hết chương';
+            btn?.classList.add('active');
+            App.showToast('Sẽ tắt TTS sau khi đọc hết chương hiện tại', 'info');
+            return;
+        }
+
+        const minutes = parseInt(minutesOrMode);
+        const ms = minutes * 60 * 1000;
+        if (label) label.textContent = `${minutes}p`;
+        btn?.classList.add('active');
+        App.showToast(`Hẹn giờ tắt sau ${minutes} phút`, 'info');
+
+        this.sleepTimerTimeout = setTimeout(() => {
+            this.fadeOutAndStop();
+            if (label) label.textContent = 'Hẹn giờ';
+            btn?.classList.remove('active');
+        }, ms);
+    },
+
+    /** Fade volume to 0 over 30 seconds then stop */
+    fadeOutAndStop() {
+        const steps = 30;
+        const interval = 1000;
+        let step = 0;
+        const originalVolume = this.gainNode?.gain.value ?? (this.audioPlayer?.volume ?? 1);
+
+        App.showToast('Hẹn giờ: đang giảm âm lượng...', 'info');
+
+        const fadeInterval = setInterval(() => {
+            step++;
+            const vol = originalVolume * (1 - step / steps);
+            if (this.gainNode) this.gainNode.gain.value = Math.max(0, vol);
+            if (this.audioPlayer) this.audioPlayer.volume = Math.max(0, vol);
+
+            if (step >= steps) {
+                clearInterval(fadeInterval);
+                this.flushSaveProgress?.();
+                Reader.flushSaveProgress();
+                this.stop();
+                // Restore volume
+                if (this.gainNode) this.gainNode.gain.value = originalVolume;
+                if (this.audioPlayer) this.audioPlayer.volume = originalVolume;
+            }
+        }, interval);
+    },
+
     start(startFragment = null) {
         this.stop();
+        this.initAudioContext();
         this.setStatus('LOADING');
 
         setTimeout(() => {
@@ -221,7 +404,11 @@ const TTSEngine = {
     },
 
     pause() {
-        if (this.selectedVoiceUri === 'google-vi-online' || this.selectedVoiceUri.startsWith('vi-VN-')) {
+        if (this.selectedVoiceUri.startsWith('vi-VN-')) {
+            if (this.audioCtx && this.audioCtx.state === 'running') {
+                this.audioCtx.suspend();
+            }
+        } else if (this.selectedVoiceUri === 'google-vi-online') {
             if (this.audioPlayer) this.audioPlayer.pause();
         } else if (this.synth && this.synth.speaking) {
             this.synth.pause();
@@ -232,7 +419,13 @@ const TTSEngine = {
     },
 
     resume() {
-        if (this.selectedVoiceUri === 'google-vi-online' || this.selectedVoiceUri.startsWith('vi-VN-')) {
+        if (this.selectedVoiceUri.startsWith('vi-VN-')) {
+            if (this.audioCtx && this.audioCtx.state === 'suspended') {
+                this.audioCtx.resume();
+            } else {
+                this.speakSentenceQueue();
+            }
+        } else if (this.selectedVoiceUri === 'google-vi-online') {
             if (this.audioPlayer && this.audioPlayer.src) {
                 this.audioPlayer.play();
             } else {
@@ -248,8 +441,40 @@ const TTSEngine = {
         this.updateStatusText('Đang đọc...');
     },
 
+    stopCurrentStream() {
+        if (this.currentStreamReader) {
+            try { this.currentStreamReader.cancel(); } catch (e) {}
+            this.currentStreamReader = null;
+        }
+        if (this.streamSentenceTimer) {
+            clearTimeout(this.streamSentenceTimer);
+            this.streamSentenceTimer = null;
+        }
+        for (const src of this.activeSources) {
+            try {
+                src.stop();
+                src.disconnect();
+            } catch (e) {}
+        }
+        this.activeSources = [];
+        this.playHead = 0;
+    },
+
     stop() {
         this.setStatus('STOPPED');
+        this.stopCurrentStream();
+
+        // Cancel sleep timer on manual stop
+        if (this.sleepTimerTimeout) {
+            clearTimeout(this.sleepTimerTimeout);
+            this.sleepTimerTimeout = null;
+        }
+        this.sleepAfterChapter = false;
+
+        if (this.audioCtx && this.audioCtx.state === 'running') {
+            this.audioCtx.suspend();
+        }
+
         if (this.audioPlayer) {
             this.audioPlayer.pause();
             this.audioPlayer.removeAttribute('src');
@@ -262,11 +487,10 @@ const TTSEngine = {
             this.nextAudioPlayer.onended = null;
             this.nextAudioPlayer.onerror = null;
         }
-        if (this.synth) {
-            this.synth.cancel();
-        }
 
-        this.playToken++; // Invalidate pending callbacks
+        if (this.synth) this.synth.cancel();
+
+        this.playToken++;
         this.currentIndex = 0;
         this.sentences = [];
         this.isTurningPage = false;
@@ -278,6 +502,13 @@ const TTSEngine = {
         if (this.status !== 'PLAYING') return;
 
         if (this.currentIndex >= this.sentences.length) {
+            // Sleep after chapter
+            if (this.sleepAfterChapter) {
+                this.sleepAfterChapter = false;
+                this.fadeOutAndStop();
+                return;
+            }
+
             if (Reader.settings.autoContinue !== false && !this.isTurningPage) {
                 this.isTurningPage = true;
                 this.setStatus('LOADING');
@@ -287,16 +518,11 @@ const TTSEngine = {
                         this.isTurningPage = false;
                         if (this.status !== 'LOADING') return;
                         if (!success) {
-                            // không có chương mới -> đã hết truyện
                             this.stop();
                             this.updateStatusText('Đã đọc hết truyện');
                             return;
                         }
-                        
-                        // Chờ một chút để sự kiện relocated cập nhật xong Reader.currentHref
-                        setTimeout(() => {
-                            this.start();
-                        }, 300);
+                        setTimeout(() => this.start(), 300);
                     }).catch(err => {
                         console.error('Error turning page', err);
                         this.stop();
@@ -319,7 +545,7 @@ const TTSEngine = {
             return;
         }
 
-        // Highlight sentence immediately on queue start
+        // Highlight câu đang đọc
         if (Reader.settings.highlightEnabled !== false) {
             this.highlightSentence(sentenceObj.raw);
         }
@@ -335,22 +561,22 @@ const TTSEngine = {
 
         const currentPlayToken = this.playToken;
 
-        if (this.selectedVoiceUri === 'google-vi-online' || this.selectedVoiceUri.startsWith('vi-VN-')) {
-            // 🌟 Engine 1: Online Cloud via Spring Boot Proxy (/api/tts)
-            
-            // Generate URL helper
-            const getAudioUrl = (text) => {
-                let voiceParam = '';
-                if (this.selectedVoiceUri.startsWith('vi-VN-')) {
-                    voiceParam = `&voice=${this.selectedVoiceUri}`;
-                }
-                return `/api/tts?text=${encodeURIComponent(text)}&lang=vi${voiceParam}`;
-            };
+        if (this.selectedVoiceUri.startsWith('vi-VN-')) {
+            // ⚡ Engine 1: VieNeu-TTS Realtime Streaming qua /api/tts/stream
+            this.playVieNeuStream(cleanedText, this.selectedVoiceUri, rate, volume, currentPlayToken);
 
-            // If audioPlayer doesn't have the correct src (not prefetched), load it
+        } else if (this.selectedVoiceUri === 'google-vi-online') {
+            // ☁️ Engine 2: Google Tiếng Việt (Cloud) via /api/tts
+            const getAudioUrl = (text) => `/api/tts?text=${encodeURIComponent(text)}&lang=vi`;
+
+            this.audioPlayer.preload = 'auto';
+            this.nextAudioPlayer.preload = 'auto';
+
             const expectedUrl = getAudioUrl(cleanedText);
-            if (!this.audioPlayer.src || !this.audioPlayer.src.includes(encodeURIComponent(cleanedText))) {
+            if (this.audioPlayer.dataset.sentenceText !== cleanedText) {
                 this.audioPlayer.src = expectedUrl;
+                this.audioPlayer.dataset.sentenceText = cleanedText;
+                this.audioPlayer.load();
             }
             
             this.audioPlayer.playbackRate = rate;
@@ -359,10 +585,10 @@ const TTSEngine = {
             this.audioPlayer.onended = () => {
                 if (this.playToken !== currentPlayToken) return;
                 if (this.status !== 'PLAYING') return;
-                this.errorCount = 0; // Reset on success
+                this.errorCount = 0;
                 this.currentIndex++;
                 
-                // Swap buffers for seamless transition
+                // Đổi buffer cho câu kế
                 const temp = this.audioPlayer;
                 this.audioPlayer = this.nextAudioPlayer;
                 this.nextAudioPlayer = temp;
@@ -372,62 +598,68 @@ const TTSEngine = {
 
             this.audioPlayer.onerror = (e) => {
                 if (this.playToken !== currentPlayToken) return;
-                console.error('Online audio proxy error', e);
+                console.error('Google audio error', e);
                 this.errorCount++;
-                if (this.errorCount > 5) {
+                if (this.errorCount > 3) {
+                    // Nếu Google TTS gặp sự cố, tự động chuyển đổi sang giọng máy Web Speech nếu có
+                    const localViVoice = this.voices.find(v => v.lang && v.lang.toLowerCase().includes('vi'));
+                    if (localViVoice) {
+                        this.updateStatusText('Google TTS mất kết nối. Đang chuyển sang giọng đọc máy...');
+                        this.selectedVoiceUri = localViVoice.voiceURI || localViVoice.name;
+                        const voiceSelect = document.getElementById('selectVoice');
+                        if (voiceSelect) voiceSelect.value = this.selectedVoiceUri;
+                        this.errorCount = 0;
+                        setTimeout(() => {
+                            if (this.status === 'PLAYING' && this.playToken === currentPlayToken) {
+                                this.speakSentenceQueue();
+                            }
+                        }, 500);
+                        return;
+                    }
+
                     this.stop();
-                    this.updateStatusText('Lỗi kết nối âm thanh liên tục, đã dừng đọc');
+                    this.updateStatusText('Lỗi kết nối âm thanh Google, vui lòng thử lại sau giây lát');
                     return;
                 }
                 
-                // Fallback to local TTS
-                if (this.synth) {
-                    console.log('Falling back to local TTS engine');
-                    this.updateStatusText('Giọng online bị gián đoạn (có thể do giới hạn tần suất truy cập sau khi đọc lâu) - đang chuyển sang giọng máy tạm thời...');
-                    this.selectedVoiceUri = ''; // clear to trigger local fallback
-                    this.speakSentenceQueue();
-                    return;
-                }
-                
-                if (this.status === 'PLAYING') {
-                    this.currentIndex++;
-                    setTimeout(() => { this.speakSentenceQueue(); }, 500);
-                }
+                this.updateStatusText(`Kết nối gián đoạn, đang thử lại (${this.errorCount}/3)...`);
+                setTimeout(() => {
+                    if (this.status === 'PLAYING' && this.playToken === currentPlayToken) {
+                        this.speakSentenceQueue();
+                    }
+                }, 1000);
             };
+
+            // Prefetch câu tiếp theo nếu có
+            if (this.currentIndex + 1 < this.sentences.length) {
+                const nextSentence = this.sentences[this.currentIndex + 1].clean;
+                if (nextSentence && /[\p{L}\p{N}]/u.test(nextSentence)) {
+                    if (this.nextAudioPlayer.dataset.sentenceText !== nextSentence) {
+                        this.nextAudioPlayer.src = getAudioUrl(nextSentence);
+                        this.nextAudioPlayer.dataset.sentenceText = nextSentence;
+                        this.nextAudioPlayer.load();
+                    }
+                }
+            }
 
             const playPromise = this.audioPlayer.play();
             if (playPromise !== undefined) {
-                playPromise.then(() => {
+                playPromise.catch(err => {
                     if (this.playToken !== currentPlayToken) return;
-                    // PREFETCH N+1 while N is playing
-                    if (this.currentIndex + 1 < this.sentences.length) {
-                        const nextSentence = this.sentences[this.currentIndex + 1].clean;
-                        if (nextSentence && /[\p{L}\p{N}]/u.test(nextSentence)) {
-                            this.nextAudioPlayer.src = getAudioUrl(nextSentence);
-                            this.nextAudioPlayer.load(); // Load in background
-                        }
-                    }
-                }).catch(err => {
-                    if (this.playToken !== currentPlayToken) return;
-                    if (err.name === 'AbortError') return; // Ignore intentional aborts
+                    if (err.name === 'AbortError') return;
 
                     console.error('Play promise error', err);
-                    if (this.synth) {
-                        console.log('Falling back to local TTS engine');
-                        this.updateStatusText('Giọng online bị gián đoạn (có thể do giới hạn tần suất truy cập sau khi đọc lâu) - đang chuyển sang giọng máy tạm thời...');
-                        this.selectedVoiceUri = ''; 
-                        this.speakSentenceQueue();
-                        return;
+                    if (err.name === 'NotAllowedError') {
+                        this.stop();
+                        this.updateStatusText('Trình duyệt chặn phát âm thanh tự động. Hãy nhấn nút Đọc để tiếp tục.');
                     }
-                    if (this.status === 'PLAYING') {
-                        this.currentIndex++;
-                        setTimeout(() => { this.speakSentenceQueue(); }, 500);
-                    }
+                    // Không tự động tăng currentIndex++ khi gặp NotSupportedError (lỗi tải audio),
+                    // sự kiện audioPlayer.onerror đã đảm nhiệm việc thử lại để chống nhảy cóc câu văn.
                 });
             }
 
         } else {
-            // 💻 Engine 2: Web Speech API Local Voice
+            // 💻 Engine 3: Web Speech API Local Voice
             if (!this.synth) return;
             this.synth.cancel();
 
@@ -453,7 +685,7 @@ const TTSEngine = {
             utterance.onend = () => {
                 if (this.playToken !== currentPlayToken) return;
                 if (this.status !== 'PLAYING') return;
-                this.errorCount = 0; // Reset on success
+                this.errorCount = 0;
                 this.currentIndex++;
                 this.speakSentenceQueue();
             };
@@ -476,6 +708,149 @@ const TTSEngine = {
 
             this.synth.speak(utterance);
         }
+    },
+
+    async playVieNeuStream(cleanedText, voice, rate, volume, currentPlayToken) {
+        this.initAudioContext();
+        if (!this.audioCtx) {
+            this.stop();
+            this.updateStatusText('Trình duyệt không hỗ trợ Web Audio API');
+            return;
+        }
+        if (this.audioCtx.state === 'suspended') {
+            try { await this.audioCtx.resume(); } catch (e) {}
+        }
+
+        this.stopCurrentStream();
+
+        const url = `/api/tts/stream?text=${encodeURIComponent(cleanedText)}&voice=${encodeURIComponent(voice)}&lang=vi`;
+        let resp;
+        try {
+            resp = await fetch(url);
+        } catch (e) {
+            if (this.playToken !== currentPlayToken) return;
+            console.error('Fetch stream error', e);
+            this.handleVieNeuError(currentPlayToken);
+            return;
+        }
+
+        if (!resp.ok) {
+            if (this.playToken !== currentPlayToken) return;
+            console.error('VieNeu Stream HTTP error', resp.status);
+            this.handleVieNeuError(currentPlayToken);
+            return;
+        }
+
+        const reader = resp.body && resp.body.getReader();
+        if (!reader) {
+            this.handleVieNeuError(currentPlayToken);
+            return;
+        }
+        this.currentStreamReader = reader;
+
+        const SAMPLE_RATE = 48000;
+        let headerConsumed = false;
+        let leftover = new Uint8Array(0);
+        this.playHead = Math.max(this.audioCtx.currentTime + 0.15, this.playHead);
+
+        try {
+            while (this.status === 'PLAYING' && this.playToken === currentPlayToken) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                let combined = value;
+                if (leftover.length) {
+                    combined = new Uint8Array(leftover.length + value.length);
+                    combined.set(leftover, 0);
+                    combined.set(value, leftover.length);
+                    leftover = new Uint8Array(0);
+                }
+
+                if (!headerConsumed) {
+                    if (combined.length < 44) {
+                        leftover = combined;
+                        continue;
+                    }
+                    combined = combined.slice(44); // Bóc tách 44-byte WAV header
+                    headerConsumed = true;
+                }
+
+                const usable = combined.length - (combined.length % 2);
+                if (usable < combined.length) {
+                    leftover = combined.slice(usable);
+                }
+
+                if (usable > 0) {
+                    const chunkPcm = combined.subarray(0, usable);
+                    this.schedulePcmChunk(chunkPcm, SAMPLE_RATE, rate, currentPlayToken);
+                }
+            }
+        } catch (err) {
+            if (this.playToken !== currentPlayToken) return;
+            console.error('Stream reading error', err);
+        } finally {
+            this.currentStreamReader = null;
+        }
+
+        if (this.playToken !== currentPlayToken || this.status !== 'PLAYING') return;
+
+        // Đợi các chunk đã lên lịch phát xong trước khi chuyển sang câu tiếp theo
+        const remainingTime = Math.max(0, this.playHead - this.audioCtx.currentTime);
+        const waitMs = (remainingTime * 1000) / rate + 60;
+
+        this.streamSentenceTimer = setTimeout(() => {
+            if (this.playToken !== currentPlayToken || this.status !== 'PLAYING') return;
+            this.errorCount = 0;
+            this.currentIndex++;
+            this.speakSentenceQueue();
+        }, waitMs);
+    },
+
+    schedulePcmChunk(uint8arr, sampleRate, rate, currentPlayToken) {
+        if (!uint8arr || uint8arr.length === 0 || !this.audioCtx) return;
+        if (this.playToken !== currentPlayToken || this.status !== 'PLAYING') return;
+
+        // Chuyển đổi PCM16 LE -> Float32
+        const view = new DataView(uint8arr.buffer, uint8arr.byteOffset, uint8arr.byteLength);
+        const n = Math.floor(uint8arr.byteLength / 2);
+        const float32 = this.audioCtx.createBuffer(1, n, sampleRate);
+        const ch = float32.getChannelData(0);
+        for (let i = 0; i < n; i++) {
+            const val = view.getInt16(i * 2, true);
+            ch[i] = Math.max(-1, Math.min(1, val / 32768));
+        }
+
+        const src = this.audioCtx.createBufferSource();
+        src.buffer = float32;
+        src.playbackRate.value = rate;
+        src.connect(this.gainNode);
+
+        const chunkDuration = float32.duration / rate;
+        const startAt = Math.max(this.playHead, this.audioCtx.currentTime + 0.05);
+        src.start(startAt);
+        this.playHead = startAt + chunkDuration;
+
+        this.activeSources.push(src);
+        src.onended = () => {
+            const idx = this.activeSources.indexOf(src);
+            if (idx !== -1) this.activeSources.splice(idx, 1);
+        };
+    },
+
+    handleVieNeuError(currentPlayToken) {
+        this.errorCount++;
+        if (this.errorCount > 3) {
+            this.stop();
+            this.updateStatusText('Lỗi kết nối VieNeu-TTS Streaming Server, vui lòng kiểm tra server');
+            return;
+        }
+
+        this.updateStatusText(`VieNeu đang bận, thử lại (${this.errorCount}/3)...`);
+        setTimeout(() => {
+            if (this.status === 'PLAYING' && this.playToken === currentPlayToken) {
+                this.speakSentenceQueue();
+            }
+        }, 1200);
     },
 
     onPageNavigated() {
@@ -569,28 +944,54 @@ const TTSEngine = {
     chunkTextIntoSentences(text) {
         if (!text) return [];
         const cleanStr = text.replace(/\r\n/g, '\n').replace(/\n+/g, '.\n');
-        const raw = cleanStr.split(/(?<=[.!?;\n])\s+/);
+        
+        // Tách câu ưu tiên theo dấu chấm câu tự nhiên (. ? ! ; hoặc xuống dòng)
+        const rawMajor = cleanStr.split(/(?<=[.!?;\n])\s+/);
         const result = [];
-        for (let s of raw) {
-            let trimmed = s.trim();
-            if (trimmed.length > 0) {
-                if (trimmed.length > 150) {
-                    const subWords = trimmed.split(/\s+/);
-                    let subChunk = '';
-                    for (let w of subWords) {
-                        if ((subChunk + ' ' + w).length > 150) {
-                            if (subChunk.trim().length > 0) result.push(subChunk.trim());
-                            subChunk = w;
-                        } else {
-                            subChunk = (subChunk + ' ' + w).trim();
+        const MAX_LEN = 120; // 80 - 120 ký tự lý tưởng cho chất lượng âm thanh Google TTS và tốc độ VieNeu
+
+        for (let major of rawMajor) {
+            let trimmed = major.trim();
+            if (!trimmed) continue;
+
+            if (trimmed.length <= MAX_LEN) {
+                result.push(trimmed);
+                continue;
+            }
+
+            // Nếu câu dài hơn MAX_LEN, tách theo dấu ngắt nghỉ (, : - —)
+            const subClauses = trimmed.split(/(?<=[,:\-—])\s+/);
+            let current = '';
+
+            for (let sub of subClauses) {
+                sub = sub.trim();
+                if (!sub) continue;
+
+                if (current.length + sub.length + 1 <= MAX_LEN) {
+                    current = (current ? current + ' ' : '') + sub;
+                } else {
+                    if (current) result.push(current);
+
+                    if (sub.length <= MAX_LEN) {
+                        current = sub;
+                    } else {
+                        // Trường hợp mệnh đề không có dấu phẩy vẫn dài hơn MAX_LEN
+                        const words = sub.split(/\s+/);
+                        current = '';
+                        for (let w of words) {
+                            if ((current + ' ' + w).length <= MAX_LEN) {
+                                current = (current ? current + ' ' : '') + w;
+                            } else {
+                                if (current) result.push(current);
+                                current = w;
+                            }
                         }
                     }
-                    if (subChunk.trim().length > 0) result.push(subChunk.trim());
-                } else {
-                    result.push(trimmed);
                 }
             }
+            if (current) result.push(current);
         }
+
         return result;
     },
 
@@ -686,7 +1087,7 @@ const TTSEngine = {
                     parent.insertBefore(this.highlightElement.firstChild, this.highlightElement);
                 }
                 parent.removeChild(this.highlightElement);
-                parent.normalize(); // Merge adjacent text nodes back together
+                parent.normalize();
             } catch (e) {}
             this.highlightElement = null;
         }

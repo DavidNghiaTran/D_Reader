@@ -1,5 +1,26 @@
+/**
+ * D_Reader — Library Module v3.0
+ * Features: Continue Reading banner, 3D book covers, filter tabs,
+ *           debounce search, XHR upload with real progress bar.
+ */
 const Library = {
     books: [],
+    activeFilter: 'all',
+    searchDebounceTimer: null,
+
+    // Gradient palette for typography covers (when no image available)
+    COVER_GRADIENTS: [
+        ['#6366F1', '#8B5CF6'],
+        ['#EC4899', '#F97316'],
+        ['#14B8A6', '#0EA5E9'],
+        ['#F59E0B', '#EF4444'],
+        ['#10B981', '#3B82F6'],
+        ['#8B5CF6', '#EC4899'],
+        ['#0EA5E9', '#14B8A6'],
+        ['#F97316', '#FBBF24'],
+        ['#6D28D9', '#2563EB'],
+        ['#BE185D', '#7C3AED'],
+    ],
 
     init() {
         this.bindEvents();
@@ -7,80 +28,101 @@ const Library = {
     },
 
     bindEvents() {
-        const uploadBtn = document.getElementById('btnUploadModal');
-        const closeModalBtn = document.getElementById('btnCloseModal');
-        const modalOverlay = document.getElementById('uploadModal');
-        const dropzone = document.getElementById('dropzone');
-        const fileInput = document.getElementById('fileInput');
-        const searchInput = document.getElementById('inputSearchBook');
+        // Upload modal
+        document.getElementById('btnUploadModal')?.addEventListener('click', () => this.openModal());
+        document.getElementById('btnCloseModal')?.addEventListener('click', () => this.closeModal());
+        document.getElementById('uploadModal')?.addEventListener('click', (e) => {
+            if (e.target === document.getElementById('uploadModal')) this.closeModal();
+        });
 
-        if (uploadBtn) uploadBtn.addEventListener('click', () => this.openModal());
-        if (closeModalBtn) closeModalBtn.addEventListener('click', () => this.closeModal());
-        
-        if (modalOverlay) {
-            modalOverlay.addEventListener('click', (e) => {
-                if (e.target === modalOverlay) this.closeModal();
-            });
-        }
-
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
-                this.filterBooks(e.target.value);
-            });
-        }
-
-        const sortSelect = document.getElementById('selectSortBook');
-        if (sortSelect) {
-            sortSelect.addEventListener('change', () => {
-                this.filterBooks(searchInput ? searchInput.value : '');
-            });
-        }
-        
-        const btnCancelDelete = document.getElementById('btnCancelDelete');
-        const deleteModal = document.getElementById('deleteModal');
-        if (btnCancelDelete) btnCancelDelete.addEventListener('click', () => {
-            if (deleteModal) deleteModal.classList.remove('active');
+        // Delete modal cancel
+        document.getElementById('btnCancelDelete')?.addEventListener('click', () => {
+            document.getElementById('deleteModal')?.classList.remove('active');
             this.pendingDeleteId = null;
         });
 
+        // Debounce search
+        const searchInput = document.getElementById('inputSearchBook');
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(this.searchDebounceTimer);
+                this.searchDebounceTimer = setTimeout(() => {
+                    this.filterAndRender();
+                }, 250);
+            });
+        }
+
+        // Sort select
+        document.getElementById('selectSortBook')?.addEventListener('change', () => this.filterAndRender());
+
+        // Filter tabs
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this.activeFilter = btn.dataset.filter || 'all';
+                this.filterAndRender();
+            });
+        });
+
+        // Dropzone
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
         if (dropzone && fileInput) {
             dropzone.addEventListener('click', () => fileInput.click());
-
-            dropzone.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                dropzone.classList.add('dragover');
-            });
-
-            dropzone.addEventListener('dragleave', () => {
-                dropzone.classList.remove('dragover');
-            });
-
+            dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+            dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
             dropzone.addEventListener('drop', (e) => {
                 e.preventDefault();
                 dropzone.classList.remove('dragover');
-                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                    this.handleFileUpload(e.dataTransfer.files[0]);
-                }
+                if (e.dataTransfer.files?.[0]) this.handleFileUpload(e.dataTransfer.files[0]);
             });
-
             fileInput.addEventListener('change', (e) => {
-                if (e.target.files && e.target.files.length > 0) {
-                    this.handleFileUpload(e.target.files[0]);
-                }
+                if (e.target.files?.[0]) this.handleFileUpload(e.target.files[0]);
             });
         }
+
+        // Logo click → library
+        document.getElementById('logoHome')?.addEventListener('click', () => {
+            if (App.currentView === 'readerView') {
+                Reader.flushSaveProgress();
+                TTS.stop();
+                App.switchView('libraryView');
+                this.loadBooks();
+            }
+        });
     },
 
     openModal() {
-        const modalOverlay = document.getElementById('uploadModal');
-        if (modalOverlay) modalOverlay.classList.add('active');
+        document.getElementById('uploadModal')?.classList.add('active');
     },
 
     closeModal() {
-        const modalOverlay = document.getElementById('uploadModal');
-        if (modalOverlay) modalOverlay.classList.remove('active');
+        document.getElementById('uploadModal')?.classList.remove('active');
         const fileInput = document.getElementById('fileInput');
         if (fileInput) fileInput.value = '';
+        document.getElementById('uploadProgress').style.display = 'none';
+        document.getElementById('uploadStatus').textContent = '';
+        this.resetDropzone();
+    },
+
+    resetDropzone() {
+        const dropzone = document.getElementById('dropzone');
+        if (dropzone) {
+            dropzone.innerHTML = `
+                <i class="ri-file-upload-line"></i>
+                <p>Kéo và thả tệp <strong>.epub</strong> vào đây<br>hoặc <strong>nhấn để chọn tệp</strong></p>
+                <p style="font-size:0.75rem;margin-top:0.5rem;opacity:0.6;">Hỗ trợ tối đa 50MB</p>
+                <input type="file" id="fileInput" accept=".epub" hidden>
+            `;
+            const newFileInput = dropzone.querySelector('#fileInput');
+            if (newFileInput) {
+                newFileInput.addEventListener('change', (e) => {
+                    if (e.target.files?.[0]) this.handleFileUpload(e.target.files[0]);
+                });
+            }
+            dropzone.onclick = () => dropzone.querySelector('#fileInput')?.click();
+        }
     },
 
     async loadBooks() {
@@ -89,47 +131,113 @@ const Library = {
             const res = await fetch('/api/books');
             if (!res.ok) throw new Error('Không thể lấy danh sách sách');
             this.books = await res.json();
-            this.render(this.books);
+            this.renderContinueBanner();
+            this.filterAndRender();
         } catch (err) {
             console.error(err);
-            App.showToast('Lỗi tải thư viện sách: ' + err.message, 'error');
-            if (grid) {
-                grid.innerHTML = `<div style="color:var(--danger);padding:2rem;text-align:center;">Lỗi tải thư viện sách: ${err.message}</div>`;
-            }
+            App.showToast('Lỗi tải thư viện: ' + err.message, 'error');
+            if (grid) grid.innerHTML = `<div class="empty-state"><i class="ri-wifi-off-line"></i><h3>Lỗi kết nối</h3><p>${err.message}</p></div>`;
         }
     },
 
-    filterBooks(query) {
+    /** Render "Continue Reading" hero banner using most-recently-read book */
+    renderContinueBanner() {
+        const banner = document.getElementById('continueReadingBanner');
+        if (!banner) return;
+
+        // Find book with highest progress that isn't 100%
+        const reading = this.books
+            .filter(b => (b.progressPercentage || 0) > 0 && (b.progressPercentage || 0) < 99.9)
+            .sort((a, b) => b.id - a.id); // recent first (higher ID = newer session)
+
+        if (reading.length === 0) {
+            banner.style.display = 'none';
+            return;
+        }
+
+        const book = reading[0];
+        const pct = (book.progressPercentage || 0).toFixed(1);
+        const coverHtml = book.coverPath
+            ? `<img class="continue-banner-cover" src="/api/books/${book.id}/cover" alt="${this.escHtml(book.title)}" onerror="this.style.display='none'">`
+            : `<div class="continue-banner-cover-placeholder">📖</div>`;
+
+        banner.innerHTML = `
+            <div class="continue-reading-banner" id="continueBannerCard">
+                ${coverHtml}
+                <div class="continue-banner-info">
+                    <div class="continue-banner-label">✦ Tiếp tục đọc</div>
+                    <div class="continue-banner-title" title="${this.escHtml(book.title)}">${this.escHtml(book.title)}</div>
+                    <div class="continue-banner-chapter">${this.escHtml(book.author || 'Chưa rõ tác giả')}</div>
+                    <div class="continue-banner-progress">
+                        <div class="continue-progress-track">
+                            <div class="continue-progress-fill" style="width:${pct}%"></div>
+                        </div>
+                        <span class="continue-progress-pct">${pct}%</span>
+                    </div>
+                    <div class="continue-banner-actions">
+                        <button class="btn btn-primary" id="btnContinueRead">
+                            <i class="ri-book-read-line"></i> Đọc tiếp
+                        </button>
+                        <button class="btn btn-secondary" id="btnContinueListen">
+                            <i class="ri-headphone-line"></i> Nghe tiếp
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        banner.style.display = 'block';
+
+        document.getElementById('btnContinueRead')?.addEventListener('click', () => this.openReader(book.id));
+        document.getElementById('btnContinueListen')?.addEventListener('click', () => {
+            this.openReader(book.id, true);
+        });
+    },
+
+    filterAndRender() {
+        const query = (document.getElementById('inputSearchBook')?.value || '').toLowerCase().trim();
+        const sortVal = document.getElementById('selectSortBook')?.value || 'recent';
+
         let filtered = [...this.books];
-        
-        if (query && query.trim() !== '') {
-            const lower = query.toLowerCase().trim();
-            filtered = filtered.filter(b => 
-                (b.title && b.title.toLowerCase().includes(lower)) ||
-                (b.author && b.author.toLowerCase().includes(lower))
+
+        // Search
+        if (query) {
+            filtered = filtered.filter(b =>
+                (b.title || '').toLowerCase().includes(query) ||
+                (b.author || '').toLowerCase().includes(query)
             );
         }
-        
-        const sortSelect = document.getElementById('selectSortBook');
-        const sortVal = sortSelect ? sortSelect.value : 'recent';
-        
+
+        // Status filter
+        if (this.activeFilter === 'reading') {
+            filtered = filtered.filter(b => (b.progressPercentage || 0) > 0 && (b.progressPercentage || 0) < 99.9);
+        } else if (this.activeFilter === 'unread') {
+            filtered = filtered.filter(b => (b.progressPercentage || 0) === 0);
+        } else if (this.activeFilter === 'done') {
+            filtered = filtered.filter(b => (b.progressPercentage || 0) >= 99.9);
+        }
+
+        // Sort
         filtered.sort((a, b) => {
-            if (sortVal === 'title_asc') {
-                return (a.title || '').localeCompare(b.title || '');
-            } else if (sortVal === 'title_desc') {
-                return (b.title || '').localeCompare(a.title || '');
-            } else if (sortVal === 'progress') {
-                return (b.progressPercentage || 0) - (a.progressPercentage || 0);
-            } else {
-                // recent (default) - assume higher ID = more recent since there's no createdAt
-                return b.id - a.id;
+            switch (sortVal) {
+                case 'title_asc': return (a.title || '').localeCompare(b.title || '', 'vi');
+                case 'title_desc': return (b.title || '').localeCompare(a.title || '', 'vi');
+                case 'progress': return (b.progressPercentage || 0) - (a.progressPercentage || 0);
+                case 'uploaded': return (b.id || 0) - (a.id || 0);
+                default: return (b.id || 0) - (a.id || 0); // recent = highest id
             }
         });
 
         this.render(filtered);
     },
 
-    render(booksToRender = this.books) {
+    /** Pick a deterministic gradient for a book based on its title */
+    getCoverGradient(book) {
+        const hash = (book.title || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+        return this.COVER_GRADIENTS[hash % this.COVER_GRADIENTS.length];
+    },
+
+    render(booksToRender) {
         const grid = document.getElementById('bookGrid');
         if (!grid) return;
 
@@ -137,48 +245,50 @@ const Library = {
 
         if (!booksToRender || booksToRender.length === 0) {
             grid.innerHTML = `
-                <div style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: var(--text-muted);">
-                    <i class="ri-book-2-line" style="font-size: 3.5rem; display: block; margin-bottom: 1rem; opacity: 0.5;"></i>
-                    <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">Chưa có sách nào trong thư viện</p>
-                    <p style="font-size: 0.85rem;">Nhấn nút <strong>Tải sách EPUB</strong> để thêm sách mới</p>
-                </div>
-            `;
+                <div class="empty-state">
+                    <i class="ri-book-2-line"></i>
+                    <h3>Chưa có sách nào</h3>
+                    <p>Nhấn <strong>Tải sách EPUB</strong> để thêm sách mới vào thư viện</p>
+                </div>`;
             return;
         }
 
         booksToRender.forEach(book => {
             const card = document.createElement('div');
             card.className = 'book-card';
+            card.setAttribute('data-book-id', book.id);
 
-            const coverSrc = book.coverPath ? `/api/books/${book.id}/cover` : null;
             const progressPct = (book.progressPercentage || 0).toFixed(1);
+            const [g1, g2] = this.getCoverGradient(book);
+
+            // 3D book cover or typography placeholder
+            const coverHtml = book.coverPath
+                ? `<img class="cover-img" src="/api/books/${book.id}/cover" alt="${this.escHtml(book.title)}" loading="lazy" onerror="this.parentElement.innerHTML=\`<div class='cover-placeholder-gradient' style='background:linear-gradient(135deg,${g1},${g2});position:absolute;inset:0;'></div><div class='cover-placeholder-content'><i class='ri-book-open-line'></i><div class='cover-placeholder-title'>${this.escHtml(book.title)}</div><div class='cover-placeholder-author'>${this.escHtml(book.author || '')}</div></div>\`">`
+                : `<div class="cover-placeholder-gradient" style="background:linear-gradient(135deg,${g1},${g2});position:absolute;inset:0;"></div>
+                   <div class="cover-placeholder-content">
+                       <i class="ri-book-open-line"></i>
+                       <div class="cover-placeholder-title">${this.escHtml(book.title)}</div>
+                       <div class="cover-placeholder-author">${this.escHtml(book.author || '')}</div>
+                   </div>`;
 
             card.innerHTML = `
-                <div class="cover-wrapper">
-                    ${coverSrc ? 
-                        `<img src="${coverSrc}" class="cover-img" alt="${this.escapeHtml(book.title)}">` :
-                        `<div class="cover-placeholder">
-                            <i class="ri-book-open-line"></i>
-                            <span>${this.escapeHtml(book.title)}</span>
-                        </div>`
-                    }
-                </div>
+                <div class="cover-wrapper">${coverHtml}</div>
                 <div class="book-info">
-                    <h3 class="book-title" title="${this.escapeHtml(book.title)}">${this.escapeHtml(book.title)}</h3>
-                    <p class="book-author">${this.escapeHtml(book.author || 'Chưa rõ tác giả')}</p>
+                    <h3 class="book-title" title="${this.escHtml(book.title)}">${this.escHtml(book.title)}</h3>
+                    <p class="book-author">${this.escHtml(book.author || 'Chưa rõ tác giả')}</p>
                     <div class="progress-section">
                         <div class="progress-bar-bg">
-                            <div class="progress-bar-fill" style="width: ${progressPct}%;"></div>
+                            <div class="progress-bar-fill" style="width:${progressPct}%"></div>
                         </div>
                         <div class="progress-text">
-                            <span>Tiến độ</span>
+                            <span>${progressPct > 0 ? 'Tiến độ' : 'Chưa đọc'}</span>
                             <span>${progressPct}%</span>
                         </div>
                     </div>
                 </div>
                 <div class="book-actions">
-                    <button class="btn btn-primary btn-read" style="flex: 1;">
-                        <i class="ri-book-read-line"></i> Đọc sách
+                    <button class="btn btn-primary btn-read" style="flex:1;">
+                        <i class="ri-book-read-line"></i> Đọc
                     </button>
                     <button class="btn btn-danger btn-icon btn-delete" title="Xóa sách">
                         <i class="ri-delete-bin-line"></i>
@@ -186,29 +296,19 @@ const Library = {
                 </div>
             `;
 
-            // Bind button clicks safely
-            const btnRead = card.querySelector('.btn-read');
-            if (btnRead) {
-                btnRead.addEventListener('click', () => this.openReader(book.id));
-            }
-
-            const btnDelete = card.querySelector('.btn-delete');
-            if (btnDelete) {
-                btnDelete.addEventListener('click', () => this.deleteBook(book.id, book.title));
-            }
-
-            // Also clicking the cover opens the reader
-            const coverWrapper = card.querySelector('.cover-wrapper');
-            if (coverWrapper) {
-                coverWrapper.style.cursor = 'pointer';
-                coverWrapper.addEventListener('click', () => this.openReader(book.id));
-            }
+            card.querySelector('.btn-read')?.addEventListener('click', () => this.openReader(book.id));
+            card.querySelector('.btn-delete')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.deleteBook(book.id, book.title);
+            });
+            card.querySelector('.cover-wrapper')?.addEventListener('click', () => this.openReader(book.id));
 
             grid.appendChild(card);
         });
     },
 
-    async handleFileUpload(file) {
+    /** Upload file with real XHR progress bar */
+    handleFileUpload(file) {
         if (!file.name.toLowerCase().endsWith('.epub')) {
             App.showToast('Chỉ hỗ trợ tệp định dạng .epub!', 'error');
             return;
@@ -218,53 +318,67 @@ const Library = {
             return;
         }
 
+        const progressContainer = document.getElementById('uploadProgress');
+        const progressBar = document.getElementById('progressBar');
+        const statusEl = document.getElementById('uploadStatus');
+        const dropzone = document.getElementById('dropzone');
+
+        if (dropzone) dropzone.innerHTML = `<i class="ri-loader-4-line ri-spin" style="font-size:2.5rem;color:var(--accent);"></i><p style="margin-top:0.5rem;">Đang tải lên và phân tích EPUB...</p>`;
+        if (progressContainer) progressContainer.style.display = 'block';
+        if (progressBar) progressBar.style.width = '0%';
+        if (statusEl) statusEl.textContent = 'Đang chuẩn bị...';
+
         const formData = new FormData();
         formData.append('file', file);
 
-        const dropzone = document.getElementById('dropzone');
-        try {
-            if (dropzone) dropzone.innerHTML = `<i class="ri-loader-4-line ri-spin" style="font-size:2.5rem;"></i><p>Đang tải lên và phân tích metadata EPUB...</p>`;
+        const xhr = new XMLHttpRequest();
 
-            const res = await fetch('/api/books/upload', {
-                method: 'POST',
-                body: formData
-            });
-
-            if (!res.ok) {
-                const errMsg = await res.text();
-                throw new Error(errMsg);
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+                const pct = Math.round((e.loaded / e.total) * 85); // leave 15% for server processing
+                if (progressBar) progressBar.style.width = `${pct}%`;
+                if (statusEl) statusEl.textContent = `Đang tải lên... ${pct}%`;
             }
+        };
 
-            this.closeModal();
-            this.loadBooks();
-            App.showToast('Tải sách lên thành công!', 'success');
-        } catch (err) {
-            console.error(err);
-            App.showToast('Tải file thất bại: ' + err.message, 'error');
-        } finally {
-            if (dropzone) {
-                dropzone.innerHTML = `
-                    <i class="ri-upload-cloud-line"></i>
-                    <p>Kéo và thả file .epub vào đây, hoặc nhấn để chọn file</p>
-                    <span style="font-size: 0.75rem; color: var(--text-muted); font-style: italic;">Hỗ trợ tối đa 50MB</span>
-                `;
+        xhr.onload = () => {
+            if (progressBar) progressBar.style.width = '100%';
+            if (xhr.status >= 200 && xhr.status < 300) {
+                if (statusEl) statusEl.textContent = 'Hoàn tất! Đang cập nhật thư viện...';
+                setTimeout(() => {
+                    this.closeModal();
+                    this.loadBooks();
+                    App.showToast('Tải sách lên thành công!', 'success');
+                }, 500);
+            } else {
+                if (statusEl) statusEl.textContent = 'Lỗi: ' + xhr.responseText;
+                App.showToast('Tải lên thất bại: ' + xhr.responseText, 'error');
+                this.resetDropzone();
             }
-        }
+        };
+
+        xhr.onerror = () => {
+            if (statusEl) statusEl.textContent = 'Lỗi kết nối, vui lòng thử lại.';
+            App.showToast('Lỗi kết nối', 'error');
+            this.resetDropzone();
+        };
+
+        xhr.open('POST', '/api/books/upload');
+        xhr.send(formData);
     },
 
     async deleteBook(id, title) {
         const deleteModal = document.getElementById('deleteModal');
         const deleteModalText = document.getElementById('deleteModalText');
         const btnConfirmDelete = document.getElementById('btnConfirmDelete');
-        
+
         if (deleteModal && deleteModalText && btnConfirmDelete) {
             deleteModalText.textContent = `Bạn có chắc chắn muốn xóa sách "${title}"?`;
             deleteModal.classList.add('active');
-            
-            // Remove old listeners by cloning
+
             const newBtn = btnConfirmDelete.cloneNode(true);
             btnConfirmDelete.parentNode.replaceChild(newBtn, btnConfirmDelete);
-            
+
             newBtn.addEventListener('click', async () => {
                 deleteModal.classList.remove('active');
                 try {
@@ -279,21 +393,13 @@ const Library = {
         }
     },
 
-    openReader(bookId) {
+    openReader(bookId, autoPlayTts = false) {
         App.switchView('readerView');
-        Reader.loadBook(bookId);
+        Reader.loadBook(bookId, autoPlayTts);
     },
 
-    escapeHtml(str) {
+    escHtml(str) {
         if (!str) return '';
-        return str.replace(/[&<>"']/g, function(m) {
-            return {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            }[m];
-        });
+        return str.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m]));
     }
 };

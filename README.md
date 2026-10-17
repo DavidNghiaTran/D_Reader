@@ -21,6 +21,7 @@ D_Reader là một ứng dụng Web đọc truyện định dạng EPUB hiện �
 ### 🎧 Hệ thống Text-to-Speech (TTS) Nâng Cao
 Hệ thống TTS được xây dựng trên cấu trúc đa tầng (Multi-Engine) và đồng bộ Karaoke-style siêu mượt:
 * **Đa nền tảng giọng đọc:**
+  * 🌟 **ViêNu TTS (Tùy chọn):** Tích hợp API ViêNu local với hơn 20 giọng đọc phong phú (Adam bựa, Trúc Ly, v.v.).
   * 🌟 **Microsoft Edge TTS Neural:** Tích hợp trực tiếp qua Java WebSocket (Không cần API Key). Hỗ trợ giọng đọc AI Tiếng Việt siêu chân thực (Hoài My - Nữ, Nam Minh - Nam).
   * ☁️ **Google TTS Cloud Proxy:** Proxy nội bộ vượt giới hạn CORS.
   * 💻 **Web Speech API:** Tự động fallback (dự phòng) sử dụng giọng đọc của thiết bị khi mất kết nối mạng.
@@ -51,6 +52,79 @@ CREATE DATABASE dreader CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ### 3. Cấu hình ứng dụng
 Mở tệp `src/main/resources/application.yml` và cập nhật thông tin kết nối MySQL của bạn (username, password).
 Hệ thống lưu trữ tệp (EPUB, Covers) mặc định được lưu ở thư mục `./storage/` ngang hàng với thư mục gốc của dự án.
+
+#### (Tùy chọn) Sử dụng giọng đọc VieNeu (tự host)
+
+VieNeu là một service TTS chạy hoàn toàn tách biệt với D_Reader. Cần bật server VieNeu **trước**, sau đó D_Reader sẽ tự kết nối.
+
+##### Bước 1 — Bật server VieNeu-TTS (bắt buộc làm TRƯỚC)
+
+```bash
+cd VieNeu-TTS   # thư mục bạn đã clone riêng
+
+# Nếu máy KHÔNG có GPU NVIDIA:
+docker compose -f docker/docker-compose.yml --profile api-cpu up
+
+# Nếu máy CÓ GPU NVIDIA (nhanh hơn ~25–50 lần):
+docker compose -f docker/docker-compose.yml --profile api-gpu up
+```
+
+> **Lưu ý:** Giữ terminal này chạy suốt trong khi dùng D_Reader — đóng terminal đồng nghĩa với mất kết nối VieNeu ngay lập tức.
+
+Kiểm tra server đã sẵn sàng:
+```bash
+curl http://localhost:8000/health
+```
+Nếu trả về `OK` / HTTP 200 → tiếp tục bước 2.
+
+##### Bước 2 — Build và chạy D_Reader (terminal khác)
+
+```bash
+# Build lại nếu có thay đổi code gần đây
+./mvnw.cmd clean package -DskipTests   # Windows
+./mvnw clean package -DskipTests       # Linux/macOS
+
+# Chạy ứng dụng
+java -jar target/dreader-0.0.1-SNAPSHOT.jar
+```
+
+Không cần thay đổi gì trong `application.yml` — cổng 8000 đã là mặc định:
+```yaml
+vieneu:
+  tts:
+    base-url: http://localhost:8000
+```
+
+##### Bước 3 — Chọn giọng VieNeu trong giao diện
+
+1. Mở sách bất kỳ trong D_Reader.
+2. Ở thanh công cụ TTS phía dưới, mở dropdown **chọn giọng đọc**.
+3. Cuộn xuống tìm nhóm **VieNeu-TTS** (Khuyến nghị / Miền Bắc / Miền Nam...), ví dụ:
+   - `Minh Quân Pro`, `Mai Anh`, `Trúc Ly`, `Adam bựa`...
+4. Chọn 1 giọng — hệ thống tự lưu, **không cần bấm gì thêm**, lần mở sách sau sẽ tự nhớ.
+
+##### Bước 4 — Kiểm tra hoạt động
+
+- Bấm **▶ Play** để bắt đầu nghe.
+- Câu đầu tiên có thể chờ vài giây (lần đầu tạo audio, chưa có prefetch) — **bình thường**.
+- Từ câu thứ 2 trở đi sẽ mượt hơn nhờ cơ chế **prefetch N+1** chạy ngầm.
+
+**So sánh với các engine cũ:**
+
+| Lỗi đã gặp | Nguyên nhân | VieNeu có còn không? |
+|---|---|---|
+| "Lỗi giọng đọc cục bộ liên tục" | Bug Chrome `speechSynthesis` | Không — phát qua `<audio>` chuẩn |
+| Rate-limit sau ~30 phút | API không chính thức có giới hạn | Không — server chạy trên máy bạn |
+| Khoảng lặng giữa các câu | Chưa có prefetch | Đã giảm mạnh nhờ prefetch N+1 |
+
+**Nếu vẫn lỗi sau khi chọn giọng VieNeu**, khả năng cao là quên bật server ở Bước 1, hoặc server chạy sai cổng. Kiểm tra nhanh:
+```bash
+curl -X POST http://localhost:8000/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"model":"vieneu-v3-turbo","voice":"Mai Anh","input":"Xin chào","response_format":"wav"}' \
+  --output test.wav
+```
+Nếu file `test.wav` tạo ra nghe được → D_Reader sẽ hoạt động bình thường.
 
 ### 4. Khởi chạy ứng dụng
 Mở Terminal/Command Prompt tại thư mục dự án và chạy lệnh sau:

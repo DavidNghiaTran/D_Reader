@@ -182,15 +182,128 @@ mất. Xem `bindUnloadSafety()` (lắng nghe `visibilitychange` + `pagehide`) v�
 của `btnBackToLibrary` trong `reader.js` làm mẫu. `saveProgress()` luôn gọi fetch với
 `keepalive: true` để request không bị hủy giữa chừng khi trang đang unload.
 
-### 4.8. 3 engine TTS và cách chọn
+### 4.8. 4 engine TTS và cách chọn
 ```
 selectedVoiceUri === 'vi-VN-HoaiMyNeural' | 'vi-VN-NamMinhNeural'  -> Edge TTS (qua /api/tts, backend gọi WebSocket)
 selectedVoiceUri === 'google-vi-online'                             -> Google Translate TTS (qua /api/tts)
+selectedVoiceUri thuộc TTSEngine.fptVoiceCodes                      -> FPT.AI TTS (qua /api/tts, backend gọi REST + polling)
+selectedVoiceUri thuộc TTSEngine.vieneuVoices                       -> VieNeu-TTS (qua /api/tts, backend gọi server tự host)
+selectedVoiceUri === bất kỳ giá trị nào khác (voiceURI của trình duyệt) -> Web Speech API (client-side, KHÔNG gọi backend)
 ```
-### 4.12. Xử lý câu cho TTS & tránh đọc thành lời dấu câu (., ...)
-1. Loại bỏ ngoặc kép, nháy đơn (`"`, `“`, `”`, `‘`, `’`...), chuẩn hoá ba chấm `…` trong `sanitizeText()`.
-2. Không escape thừa `&quot;`, `&apos;` trong XML/SSML nếu dùng Edge TTS.
-3. **Bộ lọc 2 lớp cho câu chỉ chứa dấu câu:** bất kỳ "câu" nào sau khi làm sạch mà không còn chữ hoặc số nào (`!/[\p{L}\p{N}]/u.test(s.clean)`) sẽ bị loại bỏ hoàn toàn, không gửi cho bất kỳ engine TTS nào (Edge/Google/FPT/giọng máy) — chỉ lặng lẽ bỏ qua (Lớp 1: `.filter(s => /[\p{L}\p{N}]/u.test(s.clean))` khi tạo danh sách câu; Lớp 2: lưới an toàn dự phòng ngay trong `speakSentenceQueue()`), tránh tình trạng TTS đọc thành tên ký tự ("chấm chấm chấm") khi gặp thoại im lặng "..." hoặc chỉ toàn dấu câu.
+Khi thêm giọng đọc mới, phải cập nhật đồng bộ ở **cả 2 nơi**: `loadVoices()` trong
+`tts-engine.js` (danh sách hiển thị) VÀ điều kiện rẽ nhánh (`TtsService.java` ở
+backend, `TTSEngine.isCloudVoice()` ở frontend).
+
+### 4.9. FPT.AI TTS — engine bất đồng bộ, khác hẳn Edge/Google
+`FptAiTtsService.java` gọi API `POST https://api.fpt.ai/hmi/tts/v5`. **Khác với
+Edge/Google TTS**, API này KHÔNG trả audio ngay trong response — nó trả về 1 URL
+(`async`) rồi cần polling URL đó cho tới khi file mp3 tồn tại (có thể mất vài giây
+đến vài chục giây tuỳ độ dài văn bản, theo tài liệu chính thức của FPT.AI có thể lên
+tới ~2 phút với văn bản rất dài). `FptAiTtsService.pollForAudio()` xử lý việc chờ này
+bằng backoff cố định — **không được xoá cơ chế polling này** khi refactor, nếu không
+audio trả về sẽ luôn rỗng/404.
+
+- 7 giọng hỗ trợ: `banmai, leminh, thuminh, myan, giahuy, lannhi, linhsan`
+  (`FptAiTtsService.SUPPORTED_VOICES`).
+- Cần API key miễn phí đăng ký tại https://console.fpt.ai (sản phẩm "Text to Speech"),
+  đặt vào biến môi trường `FPT_TTS_API_KEY` hoặc trực tiếp `application.yml` mục
+  `fpt.tts.api-key`. Nếu chưa cấu hình, `FptAiTtsService.isConfigured()` trả `false`
+  và backend ném lỗi rõ ràng bằng tiếng Việt thay vì lỗi khó hiểu.
+- Vì API này chậm hơn Edge/Google đáng kể (không trả về tức thì), đây là ứng viên số 1
+  hưởng lợi từ mục "Cache audio TTS theo hash văn bản" đã liệt kê trong Backlog (§8) —
+  nên ưu tiên làm cache trước khi khuyến khích người dùng dùng giọng FPT.AI cho việc
+  đọc liên tục cả cuốn sách.
+- **Encoding UTF-8 là điểm dễ vỡ nhất với engine này**: request lên FPT.AI PHẢI có
+  header `Content-Type: text/plain; charset=utf-8` tường minh, nếu không dễ bị đọc sai
+  dấu tiếng Việt (nghe như ngôn ngữ khác/lộn xộn dù không báo lỗi). `application.yml`
+  cũng đã ép `server.servlet.encoding.force: true` để đảm bảo tham số `text` nhận từ
+  `@RequestParam` luôn được Spring giải mã bằng UTF-8, loại trừ khả năng bị hỏng dấu
+  ngay từ bước đọc request. Nếu sau này lỗi "đọc sai/lộn xộn" tái diễn dù text hiển thị
+  đúng trên UI, khả năng cao là do phía server FPT.AI (giới hạn gói miễn phí, hoặc
+  voice chưa được kích hoạt cho tài khoản) chứ không phải lỗi encoding trong code —
+
+### 4.10. Google TTS/FPT.AI đều là API miễn phí KHÔNG chính thức — dễ bị giới hạn tần suất khi đọc liên tục lâu
+`translate.google.com/translate_tts` không phải API công khai chính thức của Google —
+sau khi gọi quá nhiều lần trong thời gian ngắn (dễ xảy ra khi nghe liên tục ~30 phút
+trở lên, mỗi câu là 1 request riêng), nó có xu hướng **âm thầm trả về HTTP 200 kèm 1
+đoạn audio ngắn/lỗi** thay vì báo lỗi rõ ràng — nghe như "đọc sai/lộn xộn, không ra
+tiếng Việt" dù không có exception nào. `TtsService.fetchTtsAudioChunkOnce()` đã thêm
+kiểm tra kích thước audio trả về (ước lượng tối thiểu dựa theo độ dài văn bản) để phát
+hiện và coi các phản hồi bất thường này là lỗi thật (ném exception) thay vì phát ra
+audio hỏng cho người dùng nghe. Có retry 1 lần trước khi báo lỗi hẳn.
+
+**Quy tắc khi thêm/sửa bất kỳ engine TTS online nào (kể cả sau này thêm engine mới):**
+không được coi "HTTP 200" là đủ điều kiện thành công — luôn kiểm tra thêm kích thước/
+tính hợp lệ của dữ liệu audio trả về trước khi coi là thành công, vì các API miễn phí
+không chính thức có thể trả về phản hồi "giả thành công" khi bị giới hạn.
+
+### 4.11. Điều khiển âm lượng TTS
+`Reader.settings.ttsVolume` (0.0–1.0, mặc định 1.0) lưu ở cột `tts_volume` trong bảng
+`reader_settings`. Áp dụng trực tiếp qua API chuẩn của trình duyệt — không cần xử lý
+DSP thủ công: `audioPlayer.volume` (HTML5 Audio, dùng cho Edge/Google/FPT.AI qua
+`/api/tts`) và `utterance.volume` (SpeechSynthesisUtterance, dùng cho giọng máy local).
+Lưu ý: `SpeechSynthesisUtterance.volume` chỉ có hiệu lực khi utterance được TẠO MỚI —
+đổi âm lượng giữa chừng lúc giọng máy đang đọc 1 câu sẽ không có tác dụng ngay, chỉ áp
+dụng từ câu tiếp theo (khác với `audioPlayer.volume` áp dụng tức thì kể cả đang phát).
+`TTSEngine.syncControlsFromSettings()` đồng bộ cả 3 thanh trượt (tốc độ/cao độ/âm
+lượng) với cài đặt đã lưu mỗi khi mở sách — nếu thêm thanh trượt TTS mới, nhớ cập nhật
+hàm này để tránh nó bị reset về mặc định HTML mỗi lần mở lại sách.
+
+### 4.12. Lỗi TTS đọc thành lời cả dấu câu (`.` `,` `"` `"`) — 2 nguyên nhân đã xử lý
+1. **`EdgeTtsService.escapeXml()` từng escape thừa dấu `"` và `'` thành `&quot;`/
+   `&apos;`** khi nhúng text vào SSML — về chuẩn XML, escape này chỉ cần thiết khi text
+   nằm trong THUỘC TÍNH XML, không cần khi nằm trong NỘI DUNG PHẦN TỬ (đúng như cách
+   `<speak>...</speak>` đang dùng). Việc escape thừa khiến chuỗi gửi cho Edge chứa
+   nguyên văn `&quot;`/`&apos;` thay vì ký tự dấu câu, engine SSML có thể đọc nhầm cụm
+   này thành lời. **Đã sửa: chỉ escape `&`, `<`, `>`.** Nếu sau này thêm text vào SSML
+   ở chỗ khác, PHẢI nhớ quy tắc này — không escape quote trừ khi text nằm trong thuộc
+   tính XML thật sự.
+2. **`TTSEngine.sanitizeText()` (frontend) đã strip hẳn mọi loại dấu ngoặc kép/nháy
+   kiểu chữ** (`" " ' ' „ ‟ « »` — giữ lại dấu `'` thẳng vì có thể là dấu nháy đơn
+   trong tên riêng nước ngoài), chuẩn hoá dấu `…` (1 ký tự) thành `.`, và gộp các cụm
+   dấu câu lặp liền nhau (`!!`, `??`, `,,`...) về 1 dấu duy nhất — áp dụng cho **cả 4
+   engine** vì hàm này chạy trước khi text được gửi đi bất kể chọn giọng nào. Đây là
+   bước tiền xử lý bắt buộc phải giữ nguyên khi thêm engine TTS mới — không được bỏ
+   qua `sanitizeText()` cho bất kỳ engine nào.
+3. **"Câu" chỉ toàn dấu câu (không có chữ/số nào) không được gửi cho TTS** — ví dụ
+   dòng thoại chỉ có `"..."` để thể hiện im lặng (rất phổ biến trong truyện). Khi TTS
+   nhận một đoạn không có từ nào, nó không có ngữ cảnh câu để hiểu đó là khoảng lặng
+   và đọc luôn tên từng ký tự (`"..."` → "chấm chấm chấm"). Việc lọc này áp dụng ở
+   **2 lớp**: khi xây mảng `TTSEngine.sentences` (dùng
+   `.filter(s => /[\p{L}\p{N}]/u.test(s.clean))`) VÀ lại một lần nữa ngay đầu
+   `speakSentenceQueue()` làm lưới an toàn dự phòng. Khi sửa logic chia câu/lọc câu
+   sau này, PHẢI giữ nguyên tối thiểu 1 trong 2 lớp lọc này.
+
+### 4.13. VieNeu-TTS — engine tự host (self-hosted), khác hẳn 3 engine còn lại
+`VieNeuTtsService.java` gọi tới **1 server TTS chạy trên chính máy người dùng**
+(https://github.com/pnnbao97/VieNeu-TTS), qua endpoint chuẩn OpenAI-compatible
+`POST /v1/audio/speech`. Đây là điểm khác biệt CĂN BẢN so với Edge/Google/FPT.AI:
+
+- **Không có rate-limit** (chạy local), nhưng **PHẢI có server VieNeu đang chạy sẵn**
+  ở địa chỉ `vieneu.tts.base-url` (mặc định `http://localhost:8000`, cấu hình qua biến
+  môi trường `VIENEU_TTS_URL`) — server này khởi động HOÀN TOÀN TÁCH BIỆT với D_Reader
+  (`docker compose -f docker/docker-compose.yml --profile api-cpu up` hoặc
+  `uv run python -m apps.openai_speech`, chạy trong chính repo VieNeu-TTS, không phải
+  repo D_Reader). Nếu quên bật server này, mọi request sẽ lỗi kết nối — 
+  `VieNeuTtsService` đã bắt riêng `ConnectException`/`SocketTimeoutException` để trả
+  thông báo tiếng Việt rõ ràng ("hãy chắc chắn đã chạy...") thay vì lỗi khó hiểu.
+- **25 giọng** với tên đầy đủ có dấu + khoảng trắng làm định danh trực tiếp (khác
+  FPT.AI dùng mã ngắn không dấu) — ví dụ `"Minh Quân Pro"`, `"Thái Sơn"`. Vì vậy khi
+  gắn vào query string ở frontend **bắt buộc phải `encodeURIComponent()`**, không như
+  mã giọng Edge/FPT.AI vốn thuần ASCII không cần encode.
+- **Trả về file WAV**, không phải MP3 như 3 engine kia — `TtsController` phải set
+  `Content-Type: audio/wav` riêng cho các giọng thuộc
+  `VieNeuTtsService.SUPPORTED_VOICES`, nếu không trình duyệt nhận sai định dạng.
+- Chạy CPU có thể mất vài giây/câu (theo benchmark chính thức của dự án, RTF ~0.5–0.6)
+  — `VieNeuTtsService` đặt `readTimeout` dài hơn hẳn (30s) so với 3 engine còn lại.
+  Đây cũng là ứng viên hưởng lợi nhiều nhất từ mục "cache audio TTS theo hash văn bản"
+  trong Backlog (§8) nếu máy chạy CPU (không GPU).
+
+
+  nên khuyên người dùng test trực tiếp bằng `curl` (xem ví dụ trong docs FPT.AI) để
+  loại trừ nguyên nhân code trước khi tiếp tục debug backend.
+
+---
 
 ## 5. Database Schema (tham chiếu nhanh — file gốc: `schema.sql`)
 
