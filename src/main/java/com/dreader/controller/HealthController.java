@@ -20,6 +20,9 @@ public class HealthController {
     @Autowired
     private StorageService storageService;
 
+    @Autowired
+    private com.dreader.service.VieNeuTtsService vieNeuTtsService;
+
     @GetMapping
     public ResponseEntity<Map<String, Object>> checkHealth() {
         Map<String, Object> health = new HashMap<>();
@@ -40,6 +43,13 @@ public class HealthController {
         } catch (Exception e) {
             health.put("storage", "DOWN: " + e.getMessage());
             health.put("status", "DOWN");
+        }
+
+        try {
+            boolean aiReady = vieNeuTtsService.isAvailable();
+            health.put("localAiTts", aiReady ? "READY" : "OFFLINE");
+        } catch (Exception e) {
+            health.put("localAiTts", "OFFLINE");
         }
 
         return ResponseEntity.ok(health);

@@ -22,6 +22,7 @@ const TTSEngine = {
     gainNode: null,
     activeSources: [],
     currentStreamReader: null,
+    streamAbortController: null,
     playHead: 0,
     streamSentenceTimer: null,
 
@@ -42,6 +43,7 @@ const TTSEngine = {
 
         this.bindEvents();
         this.loadVoices();
+        this.checkTtsStatus();
 
         if (this.synth && this.synth.onvoiceschanged !== undefined) {
             this.synth.onvoiceschanged = () => this.loadVoices();
@@ -109,6 +111,53 @@ const TTSEngine = {
             });
         }
 
+        // Settings Cog Button & Popover
+        const btnTogglePopover = document.getElementById('btnTtsSettingsToggle');
+        const popover = document.getElementById('ttsSettingsPopover');
+        const btnClosePopover = document.getElementById('btnCloseTtsPopover');
+        const btnQuickSpeed = document.getElementById('btnQuickSpeed');
+
+        if (btnTogglePopover && popover) {
+            btnTogglePopover.addEventListener('click', (e) => {
+                e.stopPropagation();
+                popover.classList.toggle('active');
+                if (popover.classList.contains('active')) {
+                    this.checkTtsStatus();
+                }
+            });
+        }
+
+        if (btnClosePopover && popover) {
+            btnClosePopover.addEventListener('click', (e) => {
+                e.stopPropagation();
+                popover.classList.remove('active');
+            });
+        }
+
+        if (btnQuickSpeed) {
+            btnQuickSpeed.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const speeds = [1.0, 1.5, 2.0, 3.0];
+                const current = Reader.settings.ttsRate || 1.0;
+                let nextIdx = speeds.findIndex(s => Math.abs(s - current) < 0.1) + 1;
+                if (nextIdx >= speeds.length || nextIdx === 0) nextIdx = 0;
+                const nextSpeed = speeds[nextIdx];
+                if (rateInput) {
+                    rateInput.value = nextSpeed;
+                    rateInput.dispatchEvent(new Event('input'));
+                }
+            });
+        }
+
+        // Close popover on outside click
+        document.addEventListener('click', (e) => {
+            if (popover && popover.classList.contains('active')) {
+                if (!popover.contains(e.target) && !btnTogglePopover?.contains(e.target) && !btnQuickSpeed?.contains(e.target)) {
+                    popover.classList.remove('active');
+                }
+            }
+        });
+
         if (voiceSelect) {
             voiceSelect.addEventListener('change', (e) => {
                 this.selectedVoiceUri = e.target.value;
@@ -122,6 +171,8 @@ const TTSEngine = {
                 const rate = parseFloat(e.target.value);
                 const display = document.getElementById('ttsRateDisplay');
                 if (display) display.textContent = `${rate.toFixed(1)}x`;
+                const qSpeed = document.getElementById('btnQuickSpeed');
+                if (qSpeed) qSpeed.textContent = `${rate.toFixed(1)}x`;
                 Reader.settings.ttsRate = rate;
                 Reader.saveSettings();
                 if (this.audioPlayer) {
@@ -178,6 +229,8 @@ const TTSEngine = {
             rateInput.value = Reader.settings.ttsRate;
             const d = document.getElementById('ttsRateDisplay');
             if (d) d.textContent = `${Reader.settings.ttsRate.toFixed(1)}x`;
+            const q = document.getElementById('btnQuickSpeed');
+            if (q) q.textContent = `${Reader.settings.ttsRate.toFixed(1)}x`;
             this.updateSpeedButtons(Reader.settings.ttsRate);
         }
 
@@ -442,6 +495,10 @@ const TTSEngine = {
     },
 
     stopCurrentStream() {
+        if (this.streamAbortController) {
+            try { this.streamAbortController.abort(); } catch (e) {}
+            this.streamAbortController = null;
+        }
         if (this.currentStreamReader) {
             try { this.currentStreamReader.cancel(); } catch (e) {}
             this.currentStreamReader = null;
@@ -723,11 +780,15 @@ const TTSEngine = {
 
         this.stopCurrentStream();
 
+        this.streamAbortController = new AbortController();
+        const signal = this.streamAbortController.signal;
+
         const url = `/api/tts/stream?text=${encodeURIComponent(cleanedText)}&voice=${encodeURIComponent(voice)}&lang=vi`;
         let resp;
         try {
-            resp = await fetch(url);
+            resp = await fetch(url, { signal });
         } catch (e) {
+            if (e.name === 'AbortError') return; // Cancelled intentionally
             if (this.playToken !== currentPlayToken) return;
             console.error('Fetch stream error', e);
             this.handleVieNeuError(currentPlayToken);
@@ -786,6 +847,7 @@ const TTSEngine = {
                 }
             }
         } catch (err) {
+            if (err.name === 'AbortError') return;
             if (this.playToken !== currentPlayToken) return;
             console.error('Stream reading error', err);
         } finally {
@@ -1117,6 +1179,30 @@ const TTSEngine = {
     updateStatusText(msg) {
         const statusElem = document.getElementById('ttsStatus');
         if (statusElem) statusElem.textContent = msg;
+    },
+
+    async checkTtsStatus() {
+        const badge = document.getElementById('ttsEngineStatusBadge');
+        if (!badge) return;
+        try {
+            const res = await fetch('/api/tts/status');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.localAiTts === 'READY') {
+                    badge.textContent = '⚡ Local AI: Sẵn sàng';
+                    badge.className = 'tts-engine-badge ready';
+                } else {
+                    badge.textContent = '☁️ Local AI: Chưa bật';
+                    badge.className = 'tts-engine-badge offline';
+                }
+            } else {
+                badge.textContent = '☁️ Local AI: Ngoại tuyến';
+                badge.className = 'tts-engine-badge offline';
+            }
+        } catch (e) {
+            badge.textContent = '☁️ Local AI: Ngoại tuyến';
+            badge.className = 'tts-engine-badge offline';
+        }
     }
 };
 

@@ -180,4 +180,19 @@ public class VieNeuTtsService {
                 && audioBytes[8] == 'W' && audioBytes[9] == 'A'
                 && audioBytes[10] == 'V' && audioBytes[11] == 'E';
     }
+
+    public boolean isAvailable() {
+        try {
+            String testUrl = baseUrl.endsWith("/") ? baseUrl + "docs" : baseUrl + "/docs";
+            URL url = new URL(testUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(1200);
+            conn.setReadTimeout(1200);
+            int code = conn.getResponseCode();
+            return (code >= 200 && code < 500);
+        } catch (Exception e) {
+            return false;
+        }
+    }
 }

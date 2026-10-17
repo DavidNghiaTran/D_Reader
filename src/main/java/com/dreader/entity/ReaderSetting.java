@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 public class ReaderSetting {
 
     @Id
-    private Integer id = 1;
+    private Long id = 1L;
 
     @Column(length = 50)
     private String theme = "dark";
@@ -21,6 +21,12 @@ public class ReaderSetting {
 
     @Column(name = "line_height")
     private Float lineHeight = 1.6f;
+
+    @Column(name = "flow_mode", length = 50)
+    private String flowMode = "scrolled-doc";
+
+    @Column(name = "content_width", length = 50)
+    private String contentWidth = "wide";
 
     @Column(name = "tts_rate")
     private Float ttsRate = 1.0f;
@@ -54,8 +60,14 @@ public class ReaderSetting {
 
     public ReaderSetting() {}
 
-    public Integer getId() { return id; }
-    public void setId(Integer id) { this.id = id; }
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
+    public String getFlowMode() { return flowMode; }
+    public void setFlowMode(String flowMode) { this.flowMode = flowMode; }
+
+    public String getContentWidth() { return contentWidth; }
+    public void setContentWidth(String contentWidth) { this.contentWidth = contentWidth; }
 
     public String getTheme() { return theme; }
     public void setTheme(String theme) { this.theme = theme; }

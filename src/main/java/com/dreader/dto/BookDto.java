@@ -21,6 +21,8 @@ public class BookDto {
     private LocalDateTime createdAt;
     private Float progressPercentage;
     private String currentCfi;
+    private String chapterTitle;
+    private Integer chapterIndex;
 
     public BookDto() {}
 
@@ -77,4 +79,10 @@ public class BookDto {
 
     public String getCurrentCfi() { return currentCfi; }
     public void setCurrentCfi(String currentCfi) { this.currentCfi = currentCfi; }
+
+    public String getChapterTitle() { return chapterTitle; }
+    public void setChapterTitle(String chapterTitle) { this.chapterTitle = chapterTitle; }
+
+    public Integer getChapterIndex() { return chapterIndex; }
+    public void setChapterIndex(Integer chapterIndex) { this.chapterIndex = chapterIndex; }
 }

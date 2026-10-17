@@ -11,6 +11,7 @@ const Reader = {
     bookData: null,
     currentCfi: '',
     currentHref: '',
+    currentChapterTitle: '',
     progressPercentage: 0,
     saveProgressTimeout: null,
     sessionStartTime: null,
@@ -44,6 +45,8 @@ const Reader = {
             this.flushSaveProgress();
             TTS.stop();
             this.exitZenMode();
+            const topBar = document.getElementById('topReadingProgress');
+            if (topBar) topBar.style.width = '0%';
             App.switchView('libraryView');
             Library.loadBooks();
         });
@@ -119,12 +122,14 @@ const Reader = {
         // Read mode (scrolled-doc / paginated)
         document.getElementById('selectReadMode')?.addEventListener('change', (e) => {
             this.readMode = e.target.value;
+            this.saveSettings();
             if (this.bookId) this.rebuildRendition();
         });
 
         // Content width (standard / wide / full)
         document.getElementById('selectContentWidth')?.addEventListener('change', (e) => {
             this.setContentWidth(e.target.value);
+            this.saveSettings();
         });
 
         // Navigation buttons
@@ -214,6 +219,12 @@ const Reader = {
         const fontDisplay = document.getElementById('fontSizeDisplay');
         if (fontDisplay) fontDisplay.textContent = `${this.settings.fontSize || 16}px`;
 
+        if (this.settings.flowMode) {
+            this.readMode = this.settings.flowMode;
+            const modeSelect = document.getElementById('selectReadMode');
+            if (modeSelect) modeSelect.value = this.settings.flowMode;
+        }
+
         if (typeof TTSEngine !== 'undefined' && TTSEngine.syncControlsFromSettings) {
             TTSEngine.syncControlsFromSettings();
         }
@@ -267,6 +278,8 @@ const Reader = {
                     autoScroll: this.settings.autoScroll,
                     autoContinue: this.settings.autoContinue,
                     highlightEnabled: this.settings.highlightEnabled,
+                    flowMode: this.readMode,
+                    contentWidth: this.settings.contentWidth,
                 })
             });
         } catch (e) {
@@ -296,6 +309,11 @@ const Reader = {
 
             const titleElem = document.getElementById('currentBookTitle');
             if (titleElem) titleElem.textContent = this.book.title;
+
+            const topBar = document.getElementById('topReadingProgress');
+            if (topBar && this.book?.progressPercentage) {
+                topBar.style.width = `${Number(this.book.progressPercentage).toFixed(1)}%`;
+            }
 
             const ttsLabel = document.getElementById('ttsBookLabel');
             if (ttsLabel) ttsLabel.textContent = this.book.title;
@@ -567,6 +585,7 @@ const Reader = {
 
     syncTocActiveState() {
         if (!this.currentHref) return;
+        let activeTitle = '';
         document.querySelectorAll('#tocList .toc-item').forEach(li => {
             const match = li.dataset.href && (
                 li.dataset.href === this.currentHref ||
@@ -574,7 +593,13 @@ const Reader = {
                 li.dataset.href.includes(this.currentHref.split('#')[0])
             );
             li.classList.toggle('active', !!match);
+            if (match && !activeTitle) {
+                activeTitle = li.textContent.trim();
+            }
         });
+        if (activeTitle) {
+            this.currentChapterTitle = activeTitle;
+        }
     },
 
     /** Load bookmarks from API */
@@ -748,6 +773,10 @@ const Reader = {
             if (!isNaN(pct)) {
                 this.progressPercentage = Math.min(100, Math.max(0, pct * 100));
             }
+            const topBar = document.getElementById('topReadingProgress');
+            if (topBar) {
+                topBar.style.width = `${this.progressPercentage.toFixed(1)}%`;
+            }
         }
     },
 
@@ -773,6 +802,11 @@ const Reader = {
             this.sessionStartTime = Date.now();
         }
 
+        const activeToc = document.querySelector('#tocList .toc-item.active');
+        const chapterTitle = this.currentChapterTitle || activeToc?.textContent?.trim() || '';
+        const loc = this.rendition?.currentLocation();
+        const chapterIndex = (loc?.start && typeof loc.start.index !== 'undefined') ? loc.start.index : null;
+
         try {
             await fetch(`/api/progress/${this.bookId}`, {
                 method: 'PUT',
@@ -782,6 +816,8 @@ const Reader = {
                     cfi: this.currentCfi,
                     percentage: this.progressPercentage,
                     readingTimeSeconds,
+                    chapterTitle,
+                    chapterIndex
                 })
             });
 

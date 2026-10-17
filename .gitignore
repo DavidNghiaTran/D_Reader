@@ -33,6 +33,5 @@ build/
 .vscode/
 
 ### D_Reader Storage - Exclude binary user data from Git ###
-storage/tts_cache/
-storage/books/
-storage/covers/
+storage/*
+!storage/**/.gitkeep

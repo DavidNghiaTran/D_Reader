@@ -15,6 +15,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/books")
@@ -57,6 +58,15 @@ public class BookController {
         return ResponseEntity.noContent().build();
     }
 
+    @PatchMapping("/{id}")
+    public ResponseEntity<BookDto> updateBook(
+            @PathVariable("id") Long id,
+            @RequestBody Map<String, String> body) {
+        String title = body.get("title");
+        String author = body.get("author");
+        return ResponseEntity.ok(bookService.updateBookMetadata(id, title, author));
+    }
+
     @GetMapping("/{id}/file")
     public ResponseEntity<Resource> getBookFile(@PathVariable("id") Long id) {
         Book book = bookService.getBookEntityById(id);
@@ -88,6 +98,7 @@ public class BookController {
 
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(contentType))
+                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=604800")
                 .body(resource);
     }
 }

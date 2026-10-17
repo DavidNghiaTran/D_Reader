@@ -22,17 +22,21 @@ CREATE TABLE IF NOT EXISTS reading_progress (
     book_id BIGINT PRIMARY KEY,
     current_cfi TEXT NOT NULL,
     progress_percentage DECIMAL(5,2) DEFAULT 0.00,
+    chapter_title VARCHAR(255) DEFAULT NULL,
+    chapter_index INT DEFAULT 0,
     total_reading_seconds BIGINT DEFAULT 0,
     last_read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_book_progress FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS reader_settings (
-    id TINYINT PRIMARY KEY DEFAULT 1,
+    id BIGINT PRIMARY KEY DEFAULT 1,
     theme VARCHAR(50) DEFAULT 'dark',
     font_family VARCHAR(50) DEFAULT 'sans-serif',
     font_size INT DEFAULT 16,
     line_height FLOAT DEFAULT 1.6,
+    flow_mode VARCHAR(50) DEFAULT 'scrolled-doc',
+    content_width VARCHAR(50) DEFAULT 'wide',
     tts_rate FLOAT DEFAULT 1.0,
     tts_pitch FLOAT DEFAULT 1.0,
     tts_volume FLOAT DEFAULT 1.0,

@@ -635,6 +635,19 @@ body {
     font-weight: 500;
 }
 
+.book-chapter-badge {
+    font-size: 0.72rem;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
 .book-actions {
     display: flex;
     gap: 0.5rem;
@@ -1368,6 +1381,137 @@ body {
 .sleep-timer-option:hover {
     background: var(--accent-soft);
     color: var(--accent);
+}
+
+/* ============================================================
+   TOP READING PROGRESS LINE
+   ============================================================ */
+.top-reading-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), #10B981);
+    z-index: 9999;
+    transition: width 0.3s ease;
+    pointer-events: none;
+    box-shadow: 0 0 8px rgba(99, 102, 241, 0.6);
+}
+
+/* ============================================================
+   TTS COMPACT SPEED BADGE & POPOVER
+   ============================================================ */
+.tts-btn-speed-badge {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 0.78rem;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 44px;
+    text-align: center;
+}
+
+.tts-btn-speed-badge:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    transform: scale(1.05);
+}
+
+.tts-popover {
+    position: absolute;
+    bottom: calc(100% + 14px);
+    right: 0;
+    width: 320px;
+    max-width: 90vw;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    padding: 1.25rem;
+    display: none;
+    flex-direction: column;
+    gap: 1rem;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+}
+
+.tts-popover.active {
+    display: flex;
+}
+
+.tts-popover-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.6rem;
+}
+
+.btn-close-popover {
+    background: transparent;
+    border: none;
+    font-size: 1.2rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 6px;
+    padding: 2px 6px;
+    transition: all 0.2s;
+}
+
+.btn-close-popover:hover {
+    color: var(--text-primary);
+    background: var(--border-color);
+}
+
+.tts-popover-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+}
+
+.popover-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.popover-row label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.tts-engine-badge {
+    font-size: 0.68rem;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-weight: 700;
+    background: rgba(148, 163, 184, 0.2);
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+}
+
+.tts-engine-badge.ready {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10B981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.tts-engine-badge.offline {
+    background: rgba(245, 158, 11, 0.15);
+    color: #F59E0B;
+    border: 1px solid rgba(245, 158, 11, 0.3);
 }
 
 /* ============================================================

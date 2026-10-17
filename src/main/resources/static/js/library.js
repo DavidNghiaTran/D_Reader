@@ -41,6 +41,14 @@ const Library = {
             this.pendingDeleteId = null;
         });
 
+        // Edit book modal
+        document.getElementById('btnCloseEditBookModal')?.addEventListener('click', () => this.closeEditModal());
+        document.getElementById('btnCancelEditBook')?.addEventListener('click', () => this.closeEditModal());
+        document.getElementById('btnSaveEditBook')?.addEventListener('click', () => this.saveEditBook());
+        document.getElementById('editBookModal')?.addEventListener('click', (e) => {
+            if (e.target === document.getElementById('editBookModal')) this.closeEditModal();
+        });
+
         // Debounce search
         const searchInput = document.getElementById('inputSearchBook');
         if (searchInput) {
@@ -167,7 +175,7 @@ const Library = {
                 <div class="continue-banner-info">
                     <div class="continue-banner-label">✦ Tiếp tục đọc</div>
                     <div class="continue-banner-title" title="${this.escHtml(book.title)}">${this.escHtml(book.title)}</div>
-                    <div class="continue-banner-chapter">${this.escHtml(book.author || 'Chưa rõ tác giả')}</div>
+                    <div class="continue-banner-chapter">${book.chapterTitle ? `<i class="ri-book-mark-line"></i> Đang đọc: <strong>${this.escHtml(book.chapterTitle)}</strong>` : this.escHtml(book.author || 'Chưa rõ tác giả')}</div>
                     <div class="continue-banner-progress">
                         <div class="continue-progress-track">
                             <div class="continue-progress-fill" style="width:${pct}%"></div>
@@ -277,6 +285,7 @@ const Library = {
                     <h3 class="book-title" title="${this.escHtml(book.title)}">${this.escHtml(book.title)}</h3>
                     <p class="book-author">${this.escHtml(book.author || 'Chưa rõ tác giả')}</p>
                     <div class="progress-section">
+                        ${book.chapterTitle ? `<div class="book-chapter-badge" title="${this.escHtml(book.chapterTitle)}"><i class="ri-book-mark-line"></i> Đang đọc: ${this.escHtml(book.chapterTitle)}</div>` : ''}
                         <div class="progress-bar-bg">
                             <div class="progress-bar-fill" style="width:${progressPct}%"></div>
                         </div>
@@ -290,6 +299,9 @@ const Library = {
                     <button class="btn btn-primary btn-read" style="flex:1;">
                         <i class="ri-book-read-line"></i> Đọc
                     </button>
+                    <button class="btn btn-secondary btn-icon btn-edit" title="Sửa thông tin sách">
+                        <i class="ri-edit-line"></i>
+                    </button>
                     <button class="btn btn-danger btn-icon btn-delete" title="Xóa sách">
                         <i class="ri-delete-bin-line"></i>
                     </button>
@@ -297,6 +309,10 @@ const Library = {
             `;
 
             card.querySelector('.btn-read')?.addEventListener('click', () => this.openReader(book.id));
+            card.querySelector('.btn-edit')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.openEditModal(book);
+            });
             card.querySelector('.btn-delete')?.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.deleteBook(book.id, book.title);
@@ -396,6 +412,53 @@ const Library = {
     openReader(bookId, autoPlayTts = false) {
         App.switchView('readerView');
         Reader.loadBook(bookId, autoPlayTts);
+    },
+
+    openEditModal(book) {
+        const modal = document.getElementById('editBookModal');
+        const idInput = document.getElementById('editBookId');
+        const titleInput = document.getElementById('editBookTitle');
+        const authorInput = document.getElementById('editBookAuthor');
+        if (modal && idInput && titleInput && authorInput) {
+            idInput.value = book.id;
+            titleInput.value = book.title || '';
+            authorInput.value = book.author || '';
+            modal.classList.add('active');
+        }
+    },
+
+    closeEditModal() {
+        document.getElementById('editBookModal')?.classList.remove('active');
+    },
+
+    async saveEditBook() {
+        const id = document.getElementById('editBookId')?.value;
+        const title = document.getElementById('editBookTitle')?.value?.trim();
+        const author = document.getElementById('editBookAuthor')?.value?.trim();
+
+        if (!id || !title) {
+            App.showToast('Tên truyện không được để trống!', 'error');
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/books/${id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, author })
+            });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(errText || 'Lỗi cập nhật sách');
+            }
+
+            this.closeEditModal();
+            App.showToast('Đã cập nhật thông tin sách thành công!', 'success');
+            this.loadBooks();
+        } catch (err) {
+            App.showToast('Lỗi cập nhật: ' + err.message, 'error');
+        }
     },
 
     escHtml(str) {

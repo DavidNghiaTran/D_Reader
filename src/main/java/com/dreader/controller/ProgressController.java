@@ -24,7 +24,14 @@ public class ProgressController {
     public ResponseEntity<ReadingProgress> updateProgress(
             @PathVariable("bookId") Long bookId,
             @RequestBody ProgressRequest request) {
-        ReadingProgress updated = progressService.updateProgress(bookId, request.getCfi(), request.getPercentage(), request.getReadingTimeSeconds());
+        ReadingProgress updated = progressService.updateProgress(
+                bookId,
+                request.getCfi(),
+                request.getPercentage(),
+                request.getChapterTitle(),
+                request.getChapterIndex(),
+                request.getReadingTimeSeconds()
+        );
         return ResponseEntity.ok(updated);
     }
 }

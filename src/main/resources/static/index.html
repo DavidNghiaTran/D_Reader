@@ -14,13 +14,16 @@
 
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
     <!-- CSS -->
-    <link rel="stylesheet" href="/css/app.css?v=53">
+    <link rel="stylesheet" href="/css/app.css?v=54">
 
     <!-- EPUB.js & JSZip Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
 </head>
 <body>
+<!-- Top Reading Progress Line -->
+<div id="topReadingProgress" class="top-reading-progress"></div>
+
 <div id="app">
     <!-- ====================================================
          APP HEADER
@@ -221,42 +224,27 @@
             <div class="tts-status" id="ttsStatus">Sẵn sàng</div>
         </div>
 
-        <!-- Settings Right -->
+        <!-- Settings Right: Compact Pill Controls -->
         <div class="tts-settings">
-            <!-- Voice -->
-            <div class="setting-item">
-                <i class="ri-user-voice-line"></i>
-                <select id="selectVoice" class="select-control" style="max-width:180px;">
-                    <option>Đang tải giọng...</option>
-                </select>
-            </div>
-            <!-- Speed -->
-            <div class="setting-item">
-                <span style="font-size:0.78rem;font-weight:600;">Tốc độ:</span>
-                <input type="range" id="inputTtsRate" min="0.5" max="4.0" step="0.1" value="1.0">
-                <span id="ttsRateDisplay" style="font-weight:700;min-width:34px;font-size:0.82rem;">1.0x</span>
-                <div class="speed-presets">
-                    <button class="speed-btn" data-speed="1.0">1x</button>
-                    <button class="speed-btn" data-speed="1.5">1.5x</button>
-                    <button class="speed-btn" data-speed="2.0">2x</button>
-                    <button class="speed-btn" data-speed="3.0">3x</button>
-                </div>
-            </div>
-            <!-- Pitch -->
-            <div class="setting-item">
-                <span style="font-size:0.78rem;">Cao độ:</span>
-                <input type="range" id="inputTtsPitch" min="0.8" max="1.2" step="0.05" value="1.0">
-                <span id="ttsPitchDisplay" style="font-weight:700;font-size:0.82rem;">1.0</span>
-            </div>
+            <!-- Quick Speed Badge Button (click to open settings) -->
+            <button class="tts-btn-speed-badge" id="btnQuickSpeed" title="Tốc độ đọc (bấm để đổi)">
+                <span id="ttsQuickSpeedLabel">1.0x</span>
+            </button>
+
             <!-- Volume -->
-            <div class="setting-item">
-                <i class="ri-volume-up-line"></i>
-                <input type="range" id="inputTtsVolume" min="0" max="1" step="0.05" value="1.0">
-                <span id="ttsVolumeDisplay" style="font-weight:700;min-width:36px;font-size:0.82rem;">100%</span>
+            <div class="setting-item tts-volume-item">
+                <i class="ri-volume-up-line" id="ttsVolumeIcon"></i>
+                <input type="range" id="inputTtsVolume" min="0" max="1" step="0.05" value="1.0" title="Âm lượng">
             </div>
+
+            <!-- Settings Cog Button -->
+            <button class="tts-btn tts-btn-cog" id="btnTtsSettingsToggle" title="Cài đặt giọng đọc & tốc độ">
+                <i class="ri-settings-3-line"></i>
+            </button>
+
             <!-- Sleep Timer -->
             <div style="position:relative;">
-                <button class="sleep-timer-btn" id="btnSleepTimer">
+                <button class="sleep-timer-btn" id="btnSleepTimer" title="Hẹn giờ tắt">
                     <i class="ri-moon-line"></i>
                     <span id="sleepTimerLabel">Hẹn giờ</span>
                 </button>
@@ -266,6 +254,48 @@
                     <button class="sleep-timer-option" data-minutes="60">⏱ 60 phút</button>
                     <button class="sleep-timer-option" data-minutes="chapter">📖 Hết chương</button>
                     <button class="sleep-timer-option" data-minutes="0">✖ Tắt hẹn giờ</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- TTS Popover Panel (Collapsible Sound & Voice Settings) -->
+        <div class="tts-popover" id="ttsSettingsPopover">
+            <div class="tts-popover-header">
+                <span><i class="ri-sound-module-line"></i> Cấu hình âm thanh</span>
+                <button class="btn-close-popover" id="btnCloseTtsPopover"><i class="ri-close-line"></i></button>
+            </div>
+            <div class="tts-popover-body">
+                <!-- Voice -->
+                <div class="popover-row">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <label><i class="ri-user-voice-line"></i> Giọng đọc</label>
+                        <span id="ttsEngineStatusBadge" class="tts-engine-badge">Đang kiểm tra...</span>
+                    </div>
+                    <select id="selectVoice" class="select-control" style="width:100%;">
+                        <option>Đang tải giọng...</option>
+                    </select>
+                </div>
+                <!-- Speed -->
+                <div class="popover-row">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <label><i class="ri-speed-line"></i> Tốc độ</label>
+                        <span id="ttsRateDisplay" style="font-weight:700;font-size:0.85rem;color:var(--accent);">1.0x</span>
+                    </div>
+                    <input type="range" id="inputTtsRate" min="0.5" max="4.0" step="0.1" value="1.0" style="width:100%;">
+                    <div class="speed-presets">
+                        <button class="speed-btn" data-speed="1.0">1x</button>
+                        <button class="speed-btn" data-speed="1.5">1.5x</button>
+                        <button class="speed-btn" data-speed="2.0">2x</button>
+                        <button class="speed-btn" data-speed="3.0">3x</button>
+                    </div>
+                </div>
+                <!-- Pitch -->
+                <div class="popover-row">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <label><i class="ri-voiceprint-line"></i> Cao độ</label>
+                        <span id="ttsPitchDisplay" style="font-weight:700;font-size:0.85rem;">1.0</span>
+                    </div>
+                    <input type="range" id="inputTtsPitch" min="0.8" max="1.2" step="0.05" value="1.0" style="width:100%;">
                 </div>
             </div>
         </div>
@@ -296,6 +326,33 @@
     </div>
 
     <!-- ====================================================
+         MODAL EDIT BOOK (TITLE & AUTHOR)
+         ==================================================== -->
+    <div class="modal-overlay" id="editBookModal">
+        <div class="modal-content" style="max-width:440px;">
+            <div class="modal-header">
+                <h3><i class="ri-edit-line" style="color:var(--accent);margin-right:0.4rem;"></i>Sửa thông tin sách</h3>
+                <button class="btn-close" id="btnCloseEditBookModal"><i class="ri-close-line"></i></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editBookId">
+                <div style="margin-bottom:1rem;">
+                    <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:0.35rem;color:var(--text-secondary);">Tên truyện</label>
+                    <input type="text" id="editBookTitle" class="select-control" style="width:100%;padding:0.6rem 0.8rem;" placeholder="Nhập tên truyện...">
+                </div>
+                <div style="margin-bottom:1.5rem;">
+                    <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:0.35rem;color:var(--text-secondary);">Tác giả</label>
+                    <input type="text" id="editBookAuthor" class="select-control" style="width:100%;padding:0.6rem 0.8rem;" placeholder="Nhập tác giả...">
+                </div>
+                <div style="display:flex;gap:0.75rem;justify-content:flex-end;">
+                    <button class="btn btn-secondary" id="btnCancelEditBook">Hủy</button>
+                    <button class="btn btn-primary" id="btnSaveEditBook"><i class="ri-save-line"></i> Lưu thay đổi</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====================================================
          MODAL DELETE
          ==================================================== -->
     <div class="modal-overlay" id="deleteModal">
@@ -317,10 +374,10 @@
 <div id="toastContainer" class="toast-container"></div>
 
 <!-- JS Application Scripts -->
-<script src="/js/app.js?v=53"></script>
-<script src="/js/tts-engine.js?v=53"></script>
-<script src="/js/library.js?v=53"></script>
-<script src="/js/reader.js?v=53"></script>
+<script src="/js/app.js?v=54"></script>
+<script src="/js/tts-engine.js?v=54"></script>
+<script src="/js/library.js?v=54"></script>
+<script src="/js/reader.js?v=54"></script>
 </body>
 </html>
 

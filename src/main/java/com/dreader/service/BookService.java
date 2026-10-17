@@ -3,6 +3,7 @@ package com.dreader.service;
 import com.dreader.dto.BookDto;
 import com.dreader.entity.Book;
 import com.dreader.entity.ReadingProgress;
+import com.dreader.repository.BookmarkRepository;
 import com.dreader.repository.BookRepository;
 import com.dreader.repository.ReadingProgressRepository;
 import com.dreader.util.EpubParser;
@@ -30,6 +31,9 @@ public class BookService {
 
     @Autowired
     private ReadingProgressRepository progressRepository;
+
+    @Autowired
+    private BookmarkRepository bookmarkRepository;
 
     @Autowired
     private StorageService storageService;
@@ -113,9 +117,25 @@ public class BookService {
             storageService.deleteFile(book.getCoverPath());
         }
 
-        // 2. Delete database records
+        // 2. Delete database records (cascade: bookmarks -> progress -> book)
+        bookmarkRepository.deleteByBookId(id);
         progressRepository.deleteById(id);
         bookRepository.deleteById(id);
+    }
+
+    @Transactional
+    public BookDto updateBookMetadata(Long id, String title, String author) {
+        Book book = bookRepository.findById(id)
+                .orElseThrow(() -> new BookNotFoundException("Không tìm thấy sách với ID: " + id));
+        if (title != null && !title.trim().isEmpty()) {
+            book.setTitle(title.trim());
+        }
+        if (author != null && !author.trim().isEmpty()) {
+            book.setAuthor(author.trim());
+        }
+        Book saved = bookRepository.save(book);
+        Optional<ReadingProgress> progressOpt = progressRepository.findByBookId(id);
+        return convertToDto(saved, progressOpt.orElse(null));
     }
 
     private String calculateSha256(MultipartFile file) {
@@ -154,9 +174,13 @@ public class BookService {
         if (progress != null) {
             dto.setProgressPercentage(progress.getProgressPercentage());
             dto.setCurrentCfi(progress.getCurrentCfi());
+            dto.setChapterTitle(progress.getChapterTitle());
+            dto.setChapterIndex(progress.getChapterIndex());
         } else {
             dto.setProgressPercentage(0.0f);
             dto.setCurrentCfi("");
+            dto.setChapterTitle(null);
+            dto.setChapterIndex(0);
         }
 
         return dto;

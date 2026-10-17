@@ -20,6 +20,9 @@ public class TtsController {
     @Autowired
     private TtsService ttsService;
 
+    @Autowired
+    private com.dreader.service.VieNeuTtsService vieNeuTtsService;
+
     @GetMapping
     public ResponseEntity<?> getTtsAudio(
             @RequestParam("text") String text,
@@ -77,5 +80,15 @@ public class TtsController {
                 .header(HttpHeaders.PRAGMA, "no-cache")
                 .header(HttpHeaders.EXPIRES, "0")
                 .body(responseBody);
+    }
+
+    @GetMapping("/status")
+    public ResponseEntity<java.util.Map<String, Object>> getTtsStatus() {
+        java.util.Map<String, Object> status = new java.util.HashMap<>();
+        status.put("googleTts", "READY");
+        boolean localAiReady = vieNeuTtsService.isAvailable();
+        status.put("localAiTts", localAiReady ? "READY" : "OFFLINE");
+        status.put("voices", TtsService.VIENEU_VOICES);
+        return ResponseEntity.ok(status);
     }
 }

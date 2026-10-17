@@ -15,11 +15,13 @@ public class SettingService {
     public ReaderSetting getSettings() {
         return settingRepository.findById(1L).orElseGet(() -> {
             ReaderSetting s = new ReaderSetting();
-            s.setId(1);
+            s.setId(1L);
             s.setTheme("dark");
             s.setFontFamily("sans-serif");
             s.setFontSize(16);
             s.setLineHeight(1.6f);
+            s.setFlowMode("scrolled-doc");
+            s.setContentWidth("wide");
             s.setTtsRate(1.0f);
             s.setTtsPitch(1.0f);
             s.setTtsVolume(1.0f);
@@ -40,6 +42,8 @@ public class SettingService {
         if (input.getFontFamily() != null) existing.setFontFamily(input.getFontFamily());
         if (input.getFontSize() != null) existing.setFontSize(input.getFontSize());
         if (input.getLineHeight() != null) existing.setLineHeight(input.getLineHeight());
+        if (input.getFlowMode() != null) existing.setFlowMode(input.getFlowMode());
+        if (input.getContentWidth() != null) existing.setContentWidth(input.getContentWidth());
         if (input.getTtsRate() != null) existing.setTtsRate(input.getTtsRate());
         if (input.getTtsPitch() != null) existing.setTtsPitch(input.getTtsPitch());
         if (input.getTtsVolume() != null) existing.setTtsVolume(input.getTtsVolume());

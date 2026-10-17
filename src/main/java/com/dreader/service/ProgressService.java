@@ -24,7 +24,7 @@ public class ProgressService {
     }
 
     @Transactional
-    public ReadingProgress updateProgress(Long bookId, String cfi, Float percentage, Long readingTimeSeconds) {
+    public ReadingProgress updateProgress(Long bookId, String cfi, Float percentage, String chapterTitle, Integer chapterIndex, Long readingTimeSeconds) {
         ReadingProgress progress = progressRepository.findByBookId(bookId)
                 .orElseGet(() -> {
                     ReadingProgress p = new ReadingProgress();
@@ -39,11 +39,22 @@ public class ProgressService {
         if (percentage != null) {
             progress.setProgressPercentage(percentage);
         }
+        if (chapterTitle != null && !chapterTitle.trim().isEmpty()) {
+            progress.setChapterTitle(chapterTitle.trim());
+        }
+        if (chapterIndex != null) {
+            progress.setChapterIndex(chapterIndex);
+        }
         if (readingTimeSeconds != null) {
             Long current = progress.getTotalReadingSeconds() == null ? 0L : progress.getTotalReadingSeconds();
             progress.setTotalReadingSeconds(current + readingTimeSeconds);
         }
 
         return progressRepository.save(progress);
+    }
+
+    @Transactional
+    public ReadingProgress updateProgress(Long bookId, String cfi, Float percentage, Long readingTimeSeconds) {
+        return updateProgress(bookId, cfi, percentage, null, null, readingTimeSeconds);
     }
 }

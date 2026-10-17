@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface BookmarkRepository extends JpaRepository<Bookmark, Long> {
     List<Bookmark> findByBookId(Long bookId);
+    void deleteByBookId(Long bookId);
 }
