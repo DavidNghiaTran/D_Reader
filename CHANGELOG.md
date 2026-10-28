@@ -25,6 +25,7 @@ hoặc để biết đã từng gặp lỗi tương tự chưa trước khi debu
 10. [TTS đọc thành lời cả dấu câu (`.` `,` `"` `"`)](#10)
 11. [TTS đọc "chấm chấm chấm" với dòng chỉ có dấu ba chấm](#11)
 12. [Tích hợp VieNeu-TTS (self-hosted, 25 giọng)](#12)
+13. [Khắc phục nhảy vệt highlight và giật khung màn hình khi ấn đúp hoặc đọc tốc độ cao (3.0x)](#13)
 
 ---
 
@@ -290,6 +291,22 @@ mảng `this.sentences` (filter ngay khi tạo danh sách câu), và lại một
   bắt riêng lỗi kết nối để báo rõ "hãy chắc chắn đã bật server" nếu người dùng quên
   bật server VieNeu trước khi dùng.
 
+<a id="13"></a>
+## 13. Khắc phục nhảy vệt highlight và giật khung màn hình khi ấn đúp hoặc đọc tốc độ cao (3.0x)
+
+**Triệu chứng:** Khi double-click vào đoạn văn để nghe hoặc khi chỉnh tốc độ đọc cao (ví dụ 3.0x), vệt sáng highlight bị giật nhảy liên tục, màn hình cuộn lên xuống thất thường.
+
+**Nguyên nhân gốc (3 nguyên nhân cộng hưởng):**
+- **Race Condition do Double-click:** Click đúp bắn ra 2 sự kiện click trong ~100ms kích hoạt 2 luồng `start()` chạy song song, tranh chấp highlight và phát audio.
+- **Phân mảnh TextNode (TextNode Fragmentation):** Việc chèn và tháo thẻ `<span class="tts-karaoke-highlight">` làm băm nhỏ TextNode thành nhiều mảnh rời rạc mà không gọi `parent.normalize()`, khiến `range.startOffset` tính sai vị trí ký tự khi click lại vào đoạn văn.
+- **Xung đột cuộn `scrollIntoView` & ResizeObserver ở tốc độ cao:** Ở tốc độ đọc >= 2.0x, các câu ngắn phát trong 0.2 - 0.4s làm các hiệu ứng cuộn smooth chồng chéo; đồng thời highlight có padding/bolding làm rớt chữ khiến `ResizeObserver` của epub.js tái tính toán kích thước (reframe) làm giật khung nhìn.
+
+**Cách sửa (4 bước dứt điểm):**
+1. **Chuẩn hóa DOM (`normalize()`):** Hàm `clearHighlight(doc)` trong `tts-engine.js` bóc thẻ span highlight và gọi `parent.normalize()` gộp các TextNode bị cắt rời thành nguyên vẹn.
+2. **Chống trùng lặp click đúp & làm sạch Selection (`reader.js`):** Thêm bộ lọc debounce 220ms, xóa sạch vùng bôi đen của double-click (`removeAllRanges()`), gọi `clearHighlight(doc)` trước khi đo tọa độ ký tự qua `handleParagraphClickToSpeak`.
+3. **Khóa `playToken` & hủy fetch treo bằng `AbortController` (`tts-engine.js`):** Tăng `this.playToken` ngay đầu hàm `stop()`, hủy request tải mạng qua `AbortController.abort()`, dọn dẹp các timer đang chờ.
+4. **Cuộn vùng an toàn (`scrollToHighlightSafely`):** Chỉ cuộn khi câu đọc vượt quá vùng an toàn (15% trên - 72% dưới), dùng cuộn tức thì (`auto`) khi tốc độ đọc >= 2.0x; dùng CSS `font-weight: inherit !important;` và `box-shadow` thay vì padding để không chiếm diện tích layout.
+
 ---
 
 ## Bug đã từng gặp trước đó do quên bước này (rất hay lặp lại)
@@ -297,4 +314,4 @@ mảng `this.sentences` (filter ngay khi tạo danh sách câu), và lại một
 Mỗi khi sửa file JS/CSS trong `static/`, **luôn bump số version** trong các thẻ
 `<script src="...?v=XX">` / `<link href="...?v=XX">` ở cuối `index.html`, nếu không
 trình duyệt có thể dùng bản cache cũ và khiến bạn tưởng lỗi chưa được sửa dù code đã
-đúng. Phiên bản hiện tại: `v=24`.
+đúng. Phiên bản hiện tại: `v=26`.

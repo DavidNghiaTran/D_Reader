@@ -16,18 +16,19 @@ const Reader = {
     saveProgressTimeout: null,
     sessionStartTime: null,
     isTtsNavigating: false,
+    clickReadTimeout: null,
     bookmarks: [],
     readMode: 'scrolled-doc',
     zenMode: false,
     settings: {
         theme: 'dark',
-        fontSize: 16,
+        fontSize: 22,
         fontFamily: 'sans-serif',
-        lineHeight: 1.6,
+        lineHeight: 1.8,
         ttsRate: 1.0,
         ttsPitch: 1.0,
         ttsVolume: 1.0,
-        voiceUri: 'google-vi-online',
+        voiceUri: 'google-translate-vi',
         autoScroll: true,
         autoContinue: true,
         highlightEnabled: true,
@@ -106,17 +107,15 @@ const Reader = {
 
         // Font family
         document.getElementById('selectFont')?.addEventListener('change', (e) => {
-            this.settings.fontFamily = e.target.value;
-            this.applyRenditionTheme();
-            this.saveSettings();
+            this.updateFontFamily(e.target.value);
         });
 
         // Font size
         document.getElementById('btnFontLess')?.addEventListener('click', () => {
-            if (this.settings.fontSize > 12) { this.setFontSize(this.settings.fontSize - 2); this.saveSettings(); }
+            this.setFontSize((this.settings.fontSize || 22) - 2);
         });
         document.getElementById('btnFontMore')?.addEventListener('click', () => {
-            if (this.settings.fontSize < 32) { this.setFontSize(this.settings.fontSize + 2); this.saveSettings(); }
+            this.setFontSize((this.settings.fontSize || 22) + 2);
         });
 
         // Read mode (scrolled-doc / paginated)
@@ -142,55 +141,37 @@ const Reader = {
         // Fullscreen
         document.getElementById('btnFullscreen')?.addEventListener('click', () => this.toggleFullscreen());
 
-        // Zen mode toggle button
-        document.getElementById('btnToggleZen')?.addEventListener('click', () => this.toggleZenMode());
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            if (App.currentView !== 'readerView') return;
-            const tag = document.activeElement?.tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-
-            switch (e.key) {
-                case 'ArrowLeft':
-                    e.preventDefault();
-                    this.prevPage();
-                    break;
-                case 'ArrowRight':
-                    e.preventDefault();
-                    this.nextPage();
-                    break;
-                case ' ':
-                    e.preventDefault();
-                    TTSEngine.initAudioContext();
-                    TTSEngine.togglePlayPause();
-                    break;
-                case 'b':
-                case 'B':
-                    e.preventDefault();
-                    this.addBookmark();
-                    break;
-                case 'm':
-                case 'M':
-                    e.preventDefault();
-                    document.getElementById('tocSidebar')?.classList.toggle('active');
-                    break;
-                case 'f':
-                case 'F':
-                    e.preventDefault();
-                    this.toggleFullscreen();
-                    break;
-                case 'z':
-                case 'Z':
-                    e.preventDefault();
-                    this.toggleZenMode();
-                    break;
-                case 'Escape':
-                    document.getElementById('tocSidebar')?.classList.remove('active');
-                    if (this.zenMode) this.exitZenMode();
-                    break;
+        // Minimize / Expand Floating Audio Bar
+        document.getElementById('btnToggleMiniAudio')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleAudioBarMinimize();
+        });
+        document.getElementById('ttsBar')?.addEventListener('click', (e) => {
+            const bar = document.getElementById('ttsBar');
+            if (bar?.classList.contains('minimized')) {
+                this.toggleAudioBarMinimize(false);
             }
         });
+
+        // Auto-hide top bars on scroll (and restore on scroll up or mouse near top edge)
+        let lastScrollY = window.scrollY;
+        window.addEventListener('scroll', () => {
+            if (App.currentView !== 'readerView') return;
+            const currentScrollY = window.scrollY;
+            const isScrollingDown = currentScrollY > lastScrollY && currentScrollY > 60;
+            this.handleTopBarsVisibility(isScrollingDown);
+            lastScrollY = currentScrollY;
+        }, { passive: true });
+
+        document.addEventListener('mousemove', (e) => {
+            if (App.currentView !== 'readerView') return;
+            if (e.clientY < 60) {
+                this.handleTopBarsVisibility(false);
+            }
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => this.handleKeyNavigation(e));
     },
 
     async loadSettings() {
@@ -213,11 +194,21 @@ const Reader = {
         const themeSelect = document.getElementById('selectTheme');
         if (themeSelect) themeSelect.value = theme;
 
+        const fontType = localStorage.getItem('dreader_font') || this.settings.fontFamily || 'sans-serif';
+        this.settings.fontFamily = fontType;
         const fontSelect = document.getElementById('selectFont');
-        if (fontSelect) fontSelect.value = this.settings.fontFamily || 'sans-serif';
+        if (fontSelect) fontSelect.value = fontType;
 
+        const savedSize = parseInt(localStorage.getItem('dreader_size'), 10) || this.settings.fontSize || 22;
+        this.settings.fontSize = savedSize;
         const fontDisplay = document.getElementById('fontSizeDisplay');
-        if (fontDisplay) fontDisplay.textContent = `${this.settings.fontSize || 16}px`;
+        if (fontDisplay) fontDisplay.textContent = `${this.settings.fontSize}px`;
+
+        const viewport = document.getElementById('viewer') || document.getElementById('reader-viewport');
+        if (viewport) {
+            viewport.style.setProperty('--reader-font-family', this.getFontFamilyCss(this.settings.fontFamily));
+            viewport.style.setProperty('--reader-font-size', `${this.settings.fontSize}px`);
+        }
 
         if (this.settings.flowMode) {
             this.readMode = this.settings.flowMode;
@@ -231,13 +222,47 @@ const Reader = {
 
         const savedWidth = localStorage.getItem('dreader_content_width') || this.settings.contentWidth || 'wide';
         this.setContentWidth(savedWidth);
+
+        const savedAudioMin = localStorage.getItem('dreader_audio_minimized') === 'true';
+        if (savedAudioMin) {
+            this.toggleAudioBarMinimize(true);
+        }
+    },
+
+    getFontFamilyCss(fontType) {
+        const fontMap = {
+            'sans-serif': "'Be Vietnam Pro', system-ui, -apple-system, sans-serif",
+            'serif': "'Literata', 'Merriweather', Georgia, serif",
+            'lora': "'Lora', Georgia, serif"
+        };
+        return fontMap[fontType] || fontMap['serif'];
+    },
+
+    updateFontFamily(fontType) {
+        this.settings.fontFamily = fontType || 'sans-serif';
+        const fontCss = this.getFontFamilyCss(this.settings.fontFamily);
+        const viewport = document.getElementById('viewer') || document.getElementById('reader-viewport');
+        if (viewport) {
+            viewport.style.setProperty('--reader-font-family', fontCss);
+        }
+        localStorage.setItem('dreader_font', this.settings.fontFamily);
+        this.applyRenditionTheme();
+        if (this.rendition) {
+            try {
+                const contents = this.rendition.getContents();
+                contents.forEach(c => this.injectIframeStyles(c));
+            } catch (e) {}
+        }
+        this.saveSettings();
     },
 
     getContentWidthConfig() {
         const widthConfig = {
-            standard: { viewerMax: '960px', bodyMax: '860px', padding: '24px 36px' },
-            wide:     { viewerMax: '1400px', bodyMax: '1300px', padding: '24px 36px' },
-            full:     { viewerMax: '96vw',   bodyMax: '94vw',   padding: '24px 40px' }
+            standard: { viewerMax: '1000px', bodyMax: '1000px', padding: '36px 20px 140px 20px', columns: 1 },
+            wide:     { viewerMax: '1350px', bodyMax: '1350px', padding: '36px 24px 140px 24px', columns: 1 },
+            extra:    { viewerMax: '1600px', bodyMax: '1600px', padding: '36px 28px 140px 28px', columns: 1 },
+            full:     { viewerMax: '96vw',   bodyMax: '95vw',   padding: '36px 24px 140px 24px', columns: 1 },
+            columns:  { viewerMax: '1500px', bodyMax: '1450px', padding: '36px 36px 140px 36px', columns: 2 }
         };
         return widthConfig[this.settings.contentWidth || 'wide'] || widthConfig.wide;
     },
@@ -247,6 +272,10 @@ const Reader = {
         localStorage.setItem('dreader_content_width', this.settings.contentWidth);
         const cfg = this.getContentWidthConfig();
         document.documentElement.style.setProperty('--reader-max-width', cfg.viewerMax);
+        const viewport = document.getElementById('viewer') || document.getElementById('reader-viewport');
+        if (viewport) {
+            viewport.style.setProperty('--reader-max-width', cfg.viewerMax);
+        }
 
         const select = document.getElementById('selectContentWidth');
         if (select) select.value = this.settings.contentWidth;
@@ -297,10 +326,9 @@ const Reader = {
         if (!viewer) return;
         viewer.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);gap:0.75rem;font-size:0.95rem;"><i class="ri-loader-4-line ri-spin" style="font-size:1.75rem;color:var(--accent);"></i>Đang nạp nội dung sách...</div>';
 
-        // Show TTS bar + Zen button
+        // Show TTS bar
         const ttsBar = document.getElementById('ttsBar');
         if (ttsBar) ttsBar.classList.remove('tts-hidden');
-        document.getElementById('btnToggleZen')?.style.setProperty('display', 'flex');
 
         try {
             const res = await fetch(`/api/books/${bookId}`);
@@ -379,6 +407,74 @@ const Reader = {
         }
     },
 
+    /**
+     * Làm sạch và đồng bộ cấu trúc HTML từ bất kỳ nguồn EPUB nào
+     * @param {string} rawHtml - Chuỗi HTML thô trích xuất từ file EPUB
+     * @returns {string} - Chuỗi HTML sạch, chuẩn hóa cho việc đọc chữ
+     */
+    normalizeEpubContent(rawHtml) {
+        if (!rawHtml || typeof rawHtml !== 'string') return rawHtml || '';
+
+        // 1. Chuyển đổi các thẻ <br><br> liên tiếp (thường gặp ở EPUB truyện chữ) thành thẻ đóng/mở <p>
+        let preProcessed = rawHtml.replace(/(<br\s*\/?>\s*){2,}/gi, '</p><p>');
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(preProcessed, 'text/html');
+
+        // 2. Xóa toàn bộ thẻ gây nhiễu giao diện từ file EPUB gốc
+        const forbiddenTags = doc.querySelectorAll('style, link, meta, script, font, center');
+        forbiddenTags.forEach(tag => {
+            if (tag.tagName.toLowerCase() === 'font' || tag.tagName.toLowerCase() === 'center') {
+                // Giữ lại chữ bên trong thẻ <font> hoặc <center>, chỉ xóa vỏ thẻ
+                tag.replaceWith(...tag.childNodes);
+            } else {
+                tag.remove();
+            }
+        });
+
+        // 3. Xóa sạch inline style, class, id, face, size trên TẤT CẢ các phần tử
+        const allElements = doc.body.querySelectorAll('*');
+        const attrsToRemove = ['style', 'class', 'id', 'face', 'size', 'color', 'align', 'bgcolor', 'width'];
+        
+        allElements.forEach(el => {
+            attrsToRemove.forEach(attr => el.removeAttribute(attr));
+
+            // Chuyển các thẻ <div> chứa text đơn thuần thành thẻ <p> để đồng bộ khoảng cách đoạn
+            if (el.tagName.toLowerCase() === 'div' && !el.querySelector('p, div, h1, h2, h3, table')) {
+                const p = doc.createElement('p');
+                p.innerHTML = el.innerHTML;
+                el.replaceWith(p);
+            }
+        });
+
+        // 4. Loại bỏ các đoạn văn rỗng và khoảng trắng thừa (&nbsp; đầu dòng không đồng nhất)
+        doc.body.querySelectorAll('p, span').forEach(el => {
+            // Xóa khoảng trắng cứng (\u00A0) và dấu cách thừa ở đầu/cuối đoạn
+            const cleanText = el.textContent.replace(/^[\s\u00A0\u3000]+|[\s\u00A0\u3000]+$/g, '');
+            if (!cleanText && !el.querySelector('img, svg')) {
+                el.remove(); // Xóa các thẻ <p>&nbsp;</p> gây giãn dòng bất thường
+            } else if (el.children.length === 0) {
+                el.textContent = cleanText;
+            }
+        });
+
+        // 5. Nhận diện tự động tiêu đề chương nếu file EPUB không dùng thẻ <h1>/<h2>
+        const firstParagraph = doc.body.querySelector('p');
+        if (firstParagraph && /^(Chương|Hồi|Quyển|Chapter)\s+\d+/i.test(firstParagraph.textContent.trim())) {
+            const h2 = doc.createElement('h2');
+            h2.className = 'chapter-title';
+            h2.textContent = firstParagraph.textContent.trim();
+            firstParagraph.replaceWith(h2);
+        } else {
+            const existingHeading = doc.body.querySelector('h1, h2, h3');
+            if (existingHeading) {
+                existingHeading.classList.add('chapter-title');
+            }
+        }
+
+        return doc.body.innerHTML;
+    },
+
     async buildRendition(viewer) {
         const flow = this.readMode || 'scrolled-doc';
         this.rendition = this.bookData.renderTo('viewer', {
@@ -389,12 +485,155 @@ const Reader = {
             ...(flow === 'paginated' ? { spread: 'auto' } : {})
         });
 
-        // Inject CSS into EPUB iframe
+        // Hook xử lý nội dung chương trước và khi render lên màn hình
         this.rendition.hooks.content.register((contents) => {
+            // 1. Xóa toàn bộ thẻ style/link trong head của iframe EPUB gốc
+            try {
+                contents.document.head.querySelectorAll('link[rel="stylesheet"], style').forEach(el => el.remove());
+            } catch (e) {}
+
+            // 2. Làm sạch và chuẩn hóa toàn bộ HTML từ EPUB (lột style, font rác, br br, &nbsp;)
+            try {
+                if (contents.document.body) {
+                    contents.document.body.innerHTML = this.normalizeEpubContent(contents.document.body.innerHTML);
+                }
+            } catch (e) {
+                console.error('Lỗi chuẩn hóa nội dung EPUB:', e);
+            }
+
+            // 3. Bơm hệ thống CSS Variables & phông chữ chuẩn vào iframe
             this.injectIframeStyles(contents);
+
+            // 4. Gắn các sự kiện cuộn, chuột và bàn phím tương tác
+            this.attachIframeInteractions(contents);
         });
 
         this.applyRenditionTheme();
+    },
+
+    /** Gắn tương tác cuộn, phím tắt và chỉ báo tiến độ vào iframe */
+    attachIframeInteractions(contents) {
+        if (!contents || !contents.window || !contents.document) return;
+
+        let lastIframeScrollY = 0;
+        contents.window.addEventListener('scroll', () => {
+            if (App.currentView !== 'readerView') return;
+            const currentY = contents.window.scrollY;
+            const isScrollingDown = currentY > lastIframeScrollY && currentY > 60;
+            this.handleTopBarsVisibility(isScrollingDown);
+
+            // Cập nhật Reading Progress Bar mỏng trên đầu màn hình theo độ cuộn chương
+            const scrollHeight = contents.document.body.scrollHeight - contents.window.innerHeight;
+            if (scrollHeight > 0) {
+                const scrollPct = Math.min(100, Math.max(0, (currentY / scrollHeight) * 100));
+                const topBar = document.getElementById('topReadingProgress');
+                if (topBar) {
+                    topBar.style.width = `${scrollPct.toFixed(1)}%`;
+                }
+            }
+
+            lastIframeScrollY = currentY;
+        }, { passive: true });
+
+        contents.document.addEventListener('mousemove', (e) => {
+            if (App.currentView !== 'readerView') return;
+            if (e.clientY < 60) {
+                this.handleTopBarsVisibility(false);
+            }
+        });
+
+        contents.document.addEventListener('keydown', (e) => this.handleKeyNavigation(e));
+    },
+
+    /** Điều khiển ẩn/hiện thanh Header và Toolbar khi cuộn đọc */
+    handleTopBarsVisibility(hide) {
+        if (this.zenMode && !hide) return;
+        const topBars = document.querySelectorAll('.app-header, .reader-toolbar');
+        topBars.forEach(bar => {
+            bar.classList.toggle('top-bars-hidden', !!hide);
+        });
+    },
+
+    /** Cuộn trang mượt mà theo tỷ lệ chiều cao (mặc định 85%) */
+    scrollPage(direction = 1) {
+        try {
+            const contents = this.rendition?.getContents();
+            if (contents && contents.length > 0) {
+                const win = contents[0].window;
+                const amount = win.innerHeight * 0.85 * direction;
+                win.scrollBy({ top: amount, behavior: 'smooth' });
+                return;
+            }
+        } catch (e) {}
+        window.scrollBy({ top: window.innerHeight * 0.85 * direction, behavior: 'smooth' });
+    },
+
+    /** Xử lý phím tắt chuyên dụng cho việc đọc sách */
+    handleKeyNavigation(e) {
+        if (App.currentView !== 'readerView') return;
+        const tag = (document.activeElement?.tagName || '').toUpperCase();
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+        switch (e.key) {
+            case 'ArrowLeft':
+                e.preventDefault();
+                this.prevPage();
+                break;
+            case 'ArrowRight':
+                e.preventDefault();
+                this.nextPage();
+                break;
+            case ' ':
+                e.preventDefault();
+                if (typeof TTSEngine !== 'undefined' && (TTSEngine.status === 'PLAYING' || TTSEngine.status === 'PAUSED')) {
+                    TTSEngine.initAudioContext();
+                    TTSEngine.togglePlayPause();
+                } else {
+                    this.scrollPage(e.shiftKey ? -1 : 1);
+                }
+                break;
+            case 'b':
+            case 'B':
+                e.preventDefault();
+                this.addBookmark();
+                break;
+            case 'm':
+            case 'M':
+                e.preventDefault();
+                document.getElementById('tocSidebar')?.classList.toggle('active');
+                break;
+            case 'f':
+            case 'F':
+                e.preventDefault();
+                this.toggleFullscreen();
+                break;
+            case 'z':
+            case 'Z':
+                e.preventDefault();
+                this.toggleZenMode();
+                break;
+            case 'Escape':
+                document.getElementById('tocSidebar')?.classList.remove('active');
+                if (this.zenMode) this.exitZenMode();
+                break;
+        }
+    },
+
+    /** Thu gọn / Mở rộng thanh Audio khi người dùng muốn đọc chữ tĩnh */
+    toggleAudioBarMinimize(forceState) {
+        const ttsBar = document.getElementById('ttsBar');
+        if (!ttsBar) return;
+        const isMin = typeof forceState === 'boolean' ? forceState : !ttsBar.classList.contains('minimized');
+        ttsBar.classList.toggle('minimized', isMin);
+        localStorage.setItem('dreader_audio_minimized', isMin ? 'true' : 'false');
+
+        const miniBtn = document.getElementById('btnToggleMiniAudio');
+        if (miniBtn) {
+            miniBtn.innerHTML = isMin
+                ? '<i class="ri-headphone-line"></i>'
+                : '<i class="ri-arrow-down-s-line"></i>';
+            miniBtn.title = isMin ? 'Mở rộng thanh Audio (🎧)' : 'Thu gọn thanh Audio';
+        }
     },
 
     /** Rebuild rendition when read mode changes (preserves CFI position) */
@@ -431,65 +670,178 @@ const Reader = {
     injectIframeStyles(contents) {
         const theme = this.settings.theme || 'dark';
         const themeMap = {
-            dark:  { bg: '#121214', text: '#E4E4E7', highlight: 'rgba(129,140,248,0.28)' },
-            light: { bg: '#FAF9F5', text: '#1C1C1E', highlight: 'rgba(250,204,21,0.38)' },
-            sepia: { bg: '#F4ECD8', text: '#3B2E1E', highlight: 'rgba(217,119,6,0.28)' },
-            mint:  { bg: '#E3EDCD', text: '#283618', highlight: 'rgba(132,169,83,0.35)' },
+            dark:  { bg: '#16161a', text: '#d4d4d8', heading: '#a5b4fc', highlight: 'rgba(129,140,248,0.28)', border: 'rgba(255,255,255,0.08)' },
+            light: { bg: '#f8f9fa', text: '#27272a', heading: '#1e293b', highlight: 'rgba(250,204,21,0.38)', border: 'rgba(0,0,0,0.08)' },
+            sepia: { bg: '#f4ecd8', text: '#433422', heading: '#2c1e10', highlight: 'rgba(217,119,6,0.28)', border: 'rgba(59,46,30,0.12)' },
+            mint:  { bg: '#cce8cf', text: '#1b2e1e', heading: '#0f1f12', highlight: 'rgba(132,169,83,0.35)', border: 'rgba(40,54,24,0.12)' },
+            green: { bg: '#cce8cf', text: '#1b2e1e', heading: '#0f1f12', highlight: 'rgba(132,169,83,0.35)', border: 'rgba(40,54,24,0.12)' },
         };
         const t = themeMap[theme] || themeMap.dark;
-        const fontFamily = this.settings.fontFamily === 'serif'
-            ? "'Merriweather', 'Georgia', serif"
-            : "'Inter', system-ui, sans-serif";
-
+        const fontFamily = this.getFontFamilyCss(this.settings.fontFamily);
         const cfg = this.getContentWidthConfig();
+
+        // Nhúng phông chữ Google Fonts trực tiếp vào head của iframe
+        const fontLinkId = 'dreader-google-fonts';
+        if (!contents.document.getElementById(fontLinkId)) {
+            const fontLink = contents.document.createElement('link');
+            fontLink.id = fontLinkId;
+            fontLink.rel = 'stylesheet';
+            fontLink.href = 'https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400;0,500;0,600;1,400&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap';
+            contents.document.head.appendChild(fontLink);
+        }
+
+        contents.document.body.classList.add('reader-content');
+        if (cfg.columns === 2) {
+            contents.document.body.classList.add('two-column');
+        } else {
+            contents.document.body.classList.remove('two-column');
+        }
+
+        // Bơm stylesheet hoàn chỉnh với CSS Variables & ÉP ĐỒNG BỘ 100%
+        const styleId = 'dreader-injected-styles';
+        let styleEl = contents.document.getElementById(styleId);
+        if (!styleEl) {
+            styleEl = contents.document.createElement('style');
+            styleEl.id = styleId;
+            contents.document.head.appendChild(styleEl);
+        }
+
+        styleEl.textContent = `
+            :root, html, body {
+                --reader-font-family: ${fontFamily};
+                --reader-font-size: ${this.settings.fontSize || 22}px;
+                --reader-line-height: ${this.settings.lineHeight || 1.8};
+                --reader-para-spacing: 0.9em;
+                --reader-max-width: ${cfg.bodyMax};
+                --reader-text-indent: 1.5em;
+                --reader-bg: ${t.bg};
+                --reader-text: ${t.text};
+                --reader-heading: ${t.heading};
+                --tts-highlight-bg: ${t.highlight};
+            }
+            html, body {
+                box-sizing: border-box !important;
+                background-color: var(--reader-bg) !important;
+                color: var(--reader-text) !important;
+                font-family: var(--reader-font-family) !important;
+                font-size: var(--reader-font-size) !important;
+                line-height: var(--reader-line-height) !important;
+                width: 100% !important;
+                max-width: var(--reader-max-width) !important;
+                margin: 0 auto !important;
+                padding: ${cfg.padding} !important;
+                overflow-x: hidden !important;
+                word-wrap: break-word !important;
+                overflow-wrap: break-word !important;
+            }
+            body.two-column {
+                column-count: 2 !important;
+                column-gap: 60px !important;
+                column-rule: 1px solid ${t.border} !important;
+            }
+            body *:not(h1):not(h2):not(h3):not(.tts-karaoke-highlight) {
+                font-family: inherit !important;
+                font-size: inherit !important;
+                line-height: inherit !important;
+                color: inherit !important;
+                background-color: transparent !important;
+            }
+            p {
+                margin-top: 0 !important;
+                margin-bottom: var(--reader-para-spacing) !important;
+                text-align: justify !important;
+                text-indent: var(--reader-text-indent) !important;
+                letter-spacing: 0.01em !important;
+            }
+            h1, h2, h3, .chapter-title {
+                font-family: var(--reader-font-family) !important;
+                font-size: calc(var(--reader-font-size) * 1.35) !important;
+                line-height: 1.4 !important;
+                color: var(--reader-heading) !important;
+                font-weight: 700 !important;
+                text-align: center !important;
+                text-indent: 0 !important;
+                margin: 0.5em 0 1.8em 0 !important;
+                column-span: all !important;
+            }
+            img, svg {
+                max-width: 100% !important;
+                height: auto !important;
+                display: block !important;
+                margin: 1.5em auto !important;
+            }
+            a {
+                color: var(--reader-heading) !important;
+                text-decoration: underline !important;
+            }
+            .tts-karaoke-highlight {
+                background-color: #facc15 !important;
+                color: #0f172a !important;
+                font-weight: inherit !important; /* Không đổi sang bold để tránh làm giãn chữ rớt dòng */
+                border-radius: 4px !important;
+                box-shadow: 0 0 0 2px #facc15 !important; /* Dùng box-shadow thay cho padding để không chiếm diện tích DOM */
+                transition: background-color 0.2s ease !important;
+            }
+            ::-webkit-scrollbar {
+                width: 7px !important;
+                height: 7px !important;
+            }
+            ::-webkit-scrollbar-track {
+                background: transparent !important;
+            }
+            ::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.2) !important;
+                border-radius: 4px !important;
+            }
+            ::-webkit-scrollbar-thumb:hover {
+                background: rgba(255, 255, 255, 0.38) !important;
+            }
+        `;
+
         contents.addStylesheetRules({
             'html, body': {
                 'box-sizing': 'border-box !important',
                 'background-color': `${t.bg} !important`,
                 'color': `${t.text} !important`,
                 'font-family': `${fontFamily} !important`,
-                'font-size': `${this.settings.fontSize || 16}px !important`,
-                'line-height': `${this.settings.lineHeight || 1.6} !important`,
+                'font-size': `${this.settings.fontSize || 22}px !important`,
+                'line-height': `${this.settings.lineHeight || 1.8} !important`,
                 'width': '100% !important',
                 'max-width': `${cfg.bodyMax} !important`,
                 'margin': '0 auto !important',
                 'padding': `${cfg.padding} !important`,
-                'overflow-x': 'hidden !important',
-                'word-wrap': 'break-word !important',
-                'overflow-wrap': 'break-word !important',
             },
-            'p, div, span, h1, h2, h3, h4, h5, h6, li, td, th': {
+            'body *:not(h1):not(h2):not(h3):not(.tts-karaoke-highlight)': {
+                'font-family': 'inherit !important',
+                'font-size': 'inherit !important',
+                'line-height': 'inherit !important',
                 'color': `${t.text} !important`,
                 'background': 'transparent !important',
-                'max-width': '100% !important',
-                'box-sizing': 'border-box !important',
-                'word-wrap': 'break-word !important',
-                'overflow-wrap': 'break-word !important',
             },
-            '::-webkit-scrollbar': {
-                'width': '7px !important',
-                'height': '7px !important',
+            'p': {
+                'margin-top': '0 !important',
+                'margin-bottom': '0.9em !important',
+                'text-align': 'justify !important',
+                'text-indent': '1.5em !important',
+                'letter-spacing': '0.01em !important',
             },
-            '::-webkit-scrollbar-track': {
-                'background': 'transparent !important',
-            },
-            '::-webkit-scrollbar-thumb': {
-                'background': 'rgba(255, 255, 255, 0.2) !important',
-                'border-radius': '4px !important',
-            },
-            '::-webkit-scrollbar-thumb:hover': {
-                'background': 'rgba(255, 255, 255, 0.38) !important',
-            },
-            'a': { 'color': '#818CF8 !important' },
-            '*, *::before, *::after': {
-                'box-sizing': 'border-box !important',
+            'h1, h2, h3, .chapter-title': {
+                'font-family': `${fontFamily} !important`,
+                'font-size': `${Math.round((this.settings.fontSize || 22) * 1.35)}px !important`,
+                'line-height': '1.4 !important',
+                'color': `${t.heading} !important`,
+                'font-weight': '700 !important',
+                'text-align': 'center !important',
+                'text-indent': '0 !important',
+                'margin': '0.5em 0 1.8em 0 !important',
             },
             '.tts-karaoke-highlight': {
-                'background-color': `${t.highlight} !important`,
+                'background-color': '#facc15 !important',
+                'color': '#0f172a !important',
+                'font-weight': 'inherit !important',
                 'border-radius': '4px !important',
-                'padding': '1px 3px !important',
-                'transition': 'background-color 0.2s ease !important',
-            },
+                'box-shadow': '0 0 0 2px #facc15 !important',
+            }
         });
     },
 
@@ -497,15 +849,14 @@ const Reader = {
         if (!this.rendition) return;
         const theme = this.settings.theme || 'dark';
         const themeMap = {
-            dark:  { bg: '#121214', text: '#E4E4E7' },
-            light: { bg: '#FAF9F5', text: '#1C1C1E' },
-            sepia: { bg: '#F4ECD8', text: '#3B2E1E' },
-            mint:  { bg: '#E3EDCD', text: '#283618' },
+            dark:  { bg: '#16161a', text: '#d4d4d8', heading: '#a5b4fc' },
+            light: { bg: '#f8f9fa', text: '#27272a', heading: '#1e293b' },
+            sepia: { bg: '#f4ecd8', text: '#433422', heading: '#2c1e10' },
+            mint:  { bg: '#cce8cf', text: '#1b2e1e', heading: '#0f1f12' },
+            green: { bg: '#cce8cf', text: '#1b2e1e', heading: '#0f1f12' },
         };
         const t = themeMap[theme] || themeMap.dark;
-        const fontFamily = this.settings.fontFamily === 'serif'
-            ? "'Merriweather', 'Georgia', serif"
-            : "'Inter', system-ui, sans-serif";
+        const fontFamily = this.getFontFamilyCss(this.settings.fontFamily);
         const cfg = this.getContentWidthConfig();
 
         this.rendition.themes.register('custom', {
@@ -514,8 +865,8 @@ const Reader = {
                 'background-color': `${t.bg} !important`,
                 'color': `${t.text} !important`,
                 'font-family': `${fontFamily} !important`,
-                'font-size': `${this.settings.fontSize || 16}px !important`,
-                'line-height': `${this.settings.lineHeight || 1.6} !important`,
+                'font-size': `${this.settings.fontSize || 22}px !important`,
+                'line-height': `${this.settings.lineHeight || 1.8} !important`,
                 'width': '100% !important',
                 'max-width': `${cfg.bodyMax} !important`,
                 'margin': '0 auto !important',
@@ -524,7 +875,7 @@ const Reader = {
                 'word-wrap': 'break-word !important',
                 'overflow-wrap': 'break-word !important',
             },
-            'p, div, span, h1, h2, h3, h4, h5, h6': {
+            'body *:not(h1):not(h2):not(h3):not(.tts-karaoke-highlight)': {
                 'color': `${t.text} !important`,
                 'background': 'transparent !important',
                 'max-width': '100% !important',
@@ -539,6 +890,10 @@ const Reader = {
     setTheme(theme) {
         this.settings.theme = theme;
         document.documentElement.setAttribute('data-theme', theme);
+        const viewport = document.getElementById('viewer') || document.getElementById('reader-viewport');
+        if (viewport) {
+            viewport.setAttribute('data-theme', theme);
+        }
         this.applyRenditionTheme();
         // Re-inject iframe styles for current content
         if (this.rendition) {
@@ -550,10 +905,22 @@ const Reader = {
     },
 
     setFontSize(size) {
-        this.settings.fontSize = size;
+        this.settings.fontSize = Math.min(40, Math.max(14, size));
         const display = document.getElementById('fontSizeDisplay');
-        if (display) display.textContent = `${size}px`;
+        if (display) display.textContent = `${this.settings.fontSize}px`;
+        const viewport = document.getElementById('viewer') || document.getElementById('reader-viewport');
+        if (viewport) {
+            viewport.style.setProperty('--reader-font-size', `${this.settings.fontSize}px`);
+        }
+        localStorage.setItem('dreader_size', this.settings.fontSize);
         this.applyRenditionTheme();
+        if (this.rendition) {
+            try {
+                const contents = this.rendition.getContents();
+                contents.forEach(c => this.injectIframeStyles(c));
+            } catch (e) {}
+        }
+        this.saveSettings();
     },
 
     /** Render Table of Contents */
@@ -702,19 +1069,69 @@ const Reader = {
         }
     },
 
-    /** Click-to-read functionality */
-    handleReaderClick(e) {
+    getCurrentIframeDoc() {
         try {
             const contents = this.rendition?.getContents();
-            if (!contents?.length) return;
-            const doc = contents[0].document;
+            if (contents && contents.length > 0 && contents[0].document) {
+                return contents[0].document;
+            }
+        } catch (e) {}
+        return null;
+    },
 
+    /** Click-to-read functionality with 220ms debounce, selection cleaning and DOM normalization */
+    handleReaderClick(e) {
+        try {
+            const doc = this.getCurrentIframeDoc();
+            if (!doc) return;
+
+            // Bỏ qua nếu người dùng đang bôi đen một đoạn văn dài để tạo Bookmark
+            const selection = (doc.defaultView || window).getSelection();
+            if (selection && selection.toString().trim().length > 25) return;
+
+            // Chặn việc ấn đúp chuột bắn 2 lệnh start() liên tiếp cách nhau vài chục ms
+            if (this.clickReadTimeout) {
+                clearTimeout(this.clickReadTimeout);
+                this.clickReadTimeout = null;
+            }
+
+            const clientX = e.clientX;
+            const clientY = e.clientY;
+            const targetEl = e.target;
+
+            this.clickReadTimeout = setTimeout(() => {
+                this.clickReadTimeout = null;
+
+                // 1. Xóa vệt bôi đen từ do thao tác double-click tạo ra
+                try {
+                    const sel = (doc.defaultView || window).getSelection();
+                    if (sel) sel.removeAllRanges();
+                    if (window.getSelection) window.getSelection().removeAllRanges();
+                } catch (err) {}
+
+                // 2. Gỡ highlight cũ và normalize() toàn bộ đoạn văn TRƯỚC KHI tính offset click
+                if (window.TTSEngine && typeof TTSEngine.clearHighlight === 'function') {
+                    TTSEngine.clearHighlight(doc);
+                } else if (window.TTSEngine && typeof TTSEngine.removeHighlight === 'function') {
+                    TTSEngine.removeHighlight(doc);
+                }
+
+                // 3. Lúc này TextNode đã nguyên vẹn 100%, mới lấy tọa độ ký tự nơi click
+                this.handleParagraphClickToSpeak(doc, targetEl, clientX, clientY);
+            }, 220); // Đợi 220ms để gom cú click đúp thành 1 lần kích hoạt duy nhất
+        } catch (err) {
+            console.error('Click-to-read error', err);
+        }
+    },
+
+    handleParagraphClickToSpeak(doc, targetEl, clientX, clientY) {
+        try {
             let node = null, offset = 0;
             if (doc.caretPositionFromPoint) {
-                const pos = doc.caretPositionFromPoint(e.clientX, e.clientY);
+                const pos = doc.caretPositionFromPoint(clientX, clientY);
                 if (pos) { node = pos.offsetNode; offset = pos.offset; }
             } else if (doc.caretRangeFromPoint) {
-                const range = doc.caretRangeFromPoint(e.clientX, e.clientY);
+                const range = doc.caretRangeFromPoint(clientX, clientY);
                 if (range) { node = range.startContainer; offset = range.startOffset; }
             }
 
@@ -727,9 +1144,12 @@ const Reader = {
                 }
                 snippet = snippet.trim();
                 if (snippet.length > 2) TTSEngine.start(snippet);
+            } else if (targetEl) {
+                const text = (targetEl.innerText || targetEl.textContent || '').trim();
+                if (text.length > 2) TTSEngine.start(text.substring(0, 50));
             }
         } catch (err) {
-            console.error('Click-to-read error', err);
+            console.error('Click-to-speak error', err);
         }
     },
 
@@ -885,5 +1305,6 @@ const Reader = {
     },
 };
 
-const varFontSans = "'Inter', system-ui, sans-serif";
-const varFontSerif = "'Merriweather', 'Georgia', serif";
+const varFontSans = "'Be Vietnam Pro', system-ui, -apple-system, sans-serif";
+const varFontSerif = "'Literata', 'Merriweather', Georgia, serif";
+const varFontLora = "'Lora', Georgia, serif";

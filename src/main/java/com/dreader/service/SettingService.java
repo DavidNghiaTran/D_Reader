@@ -25,7 +25,7 @@ public class SettingService {
             s.setTtsRate(1.0f);
             s.setTtsPitch(1.0f);
             s.setTtsVolume(1.0f);
-            s.setVoiceUri("google-vi-online");
+            s.setVoiceUri("google-translate-vi");
             s.setVoiceName("Google Tiếng Việt");
             s.setVoiceLang("vi-VN");
             s.setAutoContinue(true);

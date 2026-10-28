@@ -35,3 +35,6 @@ build/
 ### D_Reader Storage - Exclude binary user data from Git ###
 storage/*
 !storage/**/.gitkeep
+
+# Temporary / dump files
+repomix-output.txt

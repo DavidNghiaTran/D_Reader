@@ -9,12 +9,12 @@
     <!-- Google Fonts & Remix Icons -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400;0,500;0,600;1,400&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Lora:ital,wght@0,400;0,600;1,400&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
 
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
     <!-- CSS -->
-    <link rel="stylesheet" href="/css/app.css?v=54">
+    <link rel="stylesheet" href="/css/app.css?v=26">
 
     <!-- EPUB.js & JSZip Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -34,9 +34,6 @@
             <span>D_Reader</span>
         </div>
         <div class="header-actions">
-            <button class="btn btn-secondary btn-icon" id="btnToggleZen" title="Chế độ Zen (ẩn toolbar)" style="display:none;">
-                <i class="ri-fullscreen-line"></i>
-            </button>
             <button class="btn btn-primary" id="btnUploadModal">
                 <i class="ri-upload-cloud-2-line"></i> Tải sách EPUB
             </button>
@@ -132,17 +129,20 @@
                         <option value="mint">🌿 Mint</option>
                     </select>
                     <select id="selectFont" class="select-control" title="Font chữ">
-                        <option value="sans-serif">Sans-serif</option>
-                        <option value="serif">Serif</option>
+                        <option value="sans-serif">Sans-serif (Be Vietnam Pro)</option>
+                        <option value="serif">Serif (Literata / Merriweather)</option>
+                        <option value="lora">Lora (Trang nhã)</option>
                     </select>
                     <select id="selectReadMode" class="select-control" title="Chế độ đọc">
                         <option value="scrolled-doc">↕ Cuộn dọc</option>
                         <option value="paginated">⇄ Lật trang</option>
                     </select>
                     <select id="selectContentWidth" class="select-control" title="Độ rộng trang đọc">
-                        <option value="wide" selected>📐 Rộng (1400px)</option>
-                        <option value="full">↔ Cực rộng (Tràn lề)</option>
-                        <option value="standard">📏 Vừa (960px)</option>
+                        <option value="standard">📏 Vừa (1000px)</option>
+                        <option value="wide" selected>📐 Rộng (1350px)</option>
+                        <option value="extra">↔ Rất rộng (1600px)</option>
+                        <option value="full">🖥️ Tràn viền (Toàn màn hình)</option>
+                        <option value="columns">📖 Hai cột (Sách mở)</option>
                     </select>
                     <div style="display:flex;align-items:center;gap:0.25rem;">
                         <button class="btn btn-secondary btn-icon" id="btnFontLess" title="Thu nhỏ chữ"><i class="ri-subtract-line"></i></button>
@@ -190,7 +190,7 @@
                 <!-- EPUB Viewer -->
                 <div class="epub-viewer-wrapper">
                     <button class="nav-btn prev" id="prevPageBtn"><i class="ri-arrow-left-s-line"></i></button>
-                    <div id="viewer"></div>
+                    <div id="viewer" class="reader-viewport reader-content"></div>
                     <button class="nav-btn next" id="nextPageBtn"><i class="ri-arrow-right-s-line"></i></button>
                 </div>
             </div>
@@ -256,6 +256,11 @@
                     <button class="sleep-timer-option" data-minutes="0">✖ Tắt hẹn giờ</button>
                 </div>
             </div>
+
+            <!-- Minimize / Expand Audio Bar Button -->
+            <button class="tts-btn toggle-mini-btn" id="btnToggleMiniAudio" title="Thu gọn / Mở rộng thanh Audio (🎧)">
+                <i class="ri-headphone-line"></i>
+            </button>
         </div>
 
         <!-- TTS Popover Panel (Collapsible Sound & Voice Settings) -->
@@ -374,10 +379,10 @@
 <div id="toastContainer" class="toast-container"></div>
 
 <!-- JS Application Scripts -->
-<script src="/js/app.js?v=54"></script>
-<script src="/js/tts-engine.js?v=54"></script>
-<script src="/js/library.js?v=54"></script>
-<script src="/js/reader.js?v=54"></script>
+<script src="/js/app.js?v=26"></script>
+<script src="/js/tts-engine.js?v=26"></script>
+<script src="/js/library.js?v=26"></script>
+<script src="/js/reader.js?v=26"></script>
 </body>
 </html>
 

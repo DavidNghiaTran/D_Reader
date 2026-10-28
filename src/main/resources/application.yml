@@ -34,7 +34,3 @@ storage:
   location:
     books: ./storage/books
     covers: ./storage/covers
-
-vieneu:
-  tts:
-    base-url: http://localhost:8001

@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS reader_settings (
     tts_rate FLOAT DEFAULT 1.0,
     tts_pitch FLOAT DEFAULT 1.0,
     tts_volume FLOAT DEFAULT 1.0,
-    voice_uri VARCHAR(500) DEFAULT 'google-vi-online',
+    voice_uri VARCHAR(500) DEFAULT 'google-translate-vi',
     voice_name VARCHAR(255) DEFAULT 'Google Tiếng Việt',
     voice_lang VARCHAR(20) DEFAULT 'vi-VN',
     auto_continue BOOLEAN DEFAULT TRUE,

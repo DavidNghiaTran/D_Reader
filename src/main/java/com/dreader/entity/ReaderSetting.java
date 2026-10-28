@@ -38,7 +38,7 @@ public class ReaderSetting {
     private Float ttsVolume = 1.0f;
 
     @Column(name = "voice_uri", length = 500)
-    private String voiceUri = "google-vi-online";
+    private String voiceUri = "google-translate-vi";
 
     @Column(name = "voice_name", length = 255)
     private String voiceName = "Google Tiếng Việt";

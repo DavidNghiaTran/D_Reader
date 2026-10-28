@@ -133,7 +133,7 @@ const Library = {
         }
     },
 
-    async loadBooks() {
+    async loadBooks(retryCount = 0) {
         const grid = document.getElementById('bookGrid');
         try {
             const res = await fetch('/api/books');
@@ -143,8 +143,23 @@ const Library = {
             this.filterAndRender();
         } catch (err) {
             console.error(err);
+            if (retryCount < 2) {
+                // Tự động thử kết nối lại nếu server vừa mới khởi động
+                setTimeout(() => this.loadBooks(retryCount + 1), 1500);
+                return;
+            }
             App.showToast('Lỗi tải thư viện: ' + err.message, 'error');
-            if (grid) grid.innerHTML = `<div class="empty-state"><i class="ri-wifi-off-line"></i><h3>Lỗi kết nối</h3><p>${err.message}</p></div>`;
+            if (grid) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <i class="ri-wifi-off-line"></i>
+                        <h3>Lỗi kết nối máy chủ</h3>
+                        <p>${err.message}</p>
+                        <button class="btn btn-primary" onclick="Library.loadBooks()" style="margin-top:1rem;gap:0.5rem;display:inline-flex;align-items:center;cursor:pointer;">
+                            <i class="ri-refresh-line"></i> Thử lại
+                        </button>
+                    </div>`;
+            }
         }
     },
 

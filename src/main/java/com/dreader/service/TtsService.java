@@ -3,334 +3,137 @@ package com.dreader.service;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.security.MessageDigest;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-
-import org.springframework.beans.factory.annotation.Autowired;
+import java.time.Duration;
+import java.util.*;
 
 @Service
 public class TtsService {
 
-    @Autowired
-    private VieNeuTtsService vieNeuTtsService;
+    private static final int MAX_CHUNK_LENGTH = 180;
+    private static final String[] GOOGLE_CLIENTS = {"tw-ob", "gtx", "dict-chrome-ex"};
 
-    public static final Set<String> VIENEU_VOICES = new HashSet<>(Arrays.asList(
-            "Adam bựa", "Trúc Ly", "Anh Khôi", "Mai Anh", "Minh Quân Pro", "Thùy Dung", "Thiền Tâm Đức", "Ngọc Huyền", "Quang Sơn", "Ngọc Trân",
-            "Minh Đức", "Phạm Tuyên", "Xuân Vĩnh", "Thanh Bình", "Ngọc Linh", "Đoan Trang", "Quỳnh Anh", "Mạnh Dũng",
-            "Adam", "Thái Sơn", "Thục Đoan", "Minh Triết", "Mỹ Duyên", "Đức Trí", "Kim Thanh"
-    ));
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(8))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
 
-    static {
-        System.setProperty("java.net.preferIPv4Stack", "true");
-        System.setProperty("java.net.preferIPv6Addresses", "false");
-    }
-
-    private static final String[] GOOGLE_TTS_ENDPOINTS = {
-            "https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=",
-            "https://translate.google.com.vn/translate_tts?ie=UTF-8&client=tw-ob&tl=",
-            "https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=",
-            "https://translate.google.com/translate_tts?ie=UTF-8&client=gtx&tl="
-    };
-    private static final String CACHE_DIR = "./storage/tts_cache/";
-
-    public TtsService() {
-        try {
-            Files.createDirectories(Paths.get(CACHE_DIR));
-        } catch (Exception e) {
-            System.err.println("Failed to create TTS cache directory: " + e.getMessage());
-        }
-    }
-
-    public boolean isVieNeuVoice(String voice) {
-        String actualVoice = getActualVoice(voice);
-        return VIENEU_VOICES.contains(actualVoice);
-    }
-
-    public String getActualVoice(String voice) {
-        return (voice != null) ? voice.replace("vi-VN-", "") : "";
-    }
-
-    public Path getCacheFile(String text, String lang, String voice) {
-        String actualVoice = getActualVoice(voice);
-        String cacheKey = generateCacheKey(text, lang, actualVoice);
-        boolean isVieNeu = isVieNeuVoice(voice);
-        String extension = isVieNeu ? ".wav" : ".mp3";
-        return Paths.get(CACHE_DIR, cacheKey + extension);
-    }
-
-    public void streamSpeech(String text, String lang, String voice, OutputStream clientOut) throws Exception {
-        if (text == null || text.trim().isEmpty()) {
-            return;
-        }
-
-        Path cacheFile = getCacheFile(text, lang, voice);
-        if (Files.exists(cacheFile)) {
-            try (InputStream fis = Files.newInputStream(cacheFile)) {
-                byte[] buffer = new byte[8192];
-                int n;
-                while ((n = fis.read(buffer)) != -1) {
-                    clientOut.write(buffer, 0, n);
-                }
-                clientOut.flush();
-                return;
-            }
-        }
-
-        if (isVieNeuVoice(voice)) {
-            String actualVoice = getActualVoice(voice);
-            vieNeuTtsService.streamSpeech(text, actualVoice, clientOut, cacheFile);
-        } else {
-            byte[] audioData = synthesizeSpeech(text, lang, voice);
-            if (audioData != null && audioData.length > 0) {
-                clientOut.write(audioData);
-                clientOut.flush();
-            }
-        }
-    }
-
-    public byte[] synthesizeSpeech(String text, String lang, String voice) throws Exception {
-        if (text == null || text.trim().isEmpty()) {
-            return new byte[0];
-        }
-
-        Path cacheFile = getCacheFile(text, lang, voice);
-
-        if (Files.exists(cacheFile)) {
-            return Files.readAllBytes(cacheFile);
-        }
-
-        byte[] audioData = null;
-        if (isVieNeuVoice(voice)) {
-            String actualVoice = getActualVoice(voice);
-            audioData = vieNeuTtsService.synthesizeSpeech(text, actualVoice);
-        } else {
-            String targetLang = (lang == null || lang.trim().isEmpty()) ? "vi" : lang.trim();
-            List<String> chunks = splitTextForTts(text, 140);
-
-            if (chunks.size() == 1) {
-                audioData = fetchTtsAudioChunk(chunks.get(0), targetLang);
-            } else {
-                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-                for (int i = 0; i < chunks.size(); i++) {
-                    if (i > 0) {
-                        // Tránh dồn request liên tiếp gây TCP RST từ Google
-                        Thread.sleep(60);
-                    }
-                    byte[] audioChunk = fetchTtsAudioChunk(chunks.get(i), targetLang);
-                    if (audioChunk != null && audioChunk.length > 0) {
-                        if (i == 0) {
-                            outputStream.write(audioChunk);
-                        } else {
-                            // Ghép nối an toàn: bóc tách ID3v2 header từ chunk thứ 2 trở đi
-                            // để tránh làm lệch frame header của trình phát MP3
-                            int audioOffset = skipId3v2Header(audioChunk);
-                            outputStream.write(audioChunk, audioOffset, audioChunk.length - audioOffset);
-                        }
-                    }
-                }
-                audioData = outputStream.toByteArray();
-            }
-        }
-
-        if (audioData != null && audioData.length > 0) {
-            try {
-                Files.write(cacheFile, audioData);
-            } catch (Exception e) {
-                System.err.println("Failed to write TTS cache file: " + e.getMessage());
-            }
-        }
-
-        return audioData;
-    }
-
-    private int skipId3v2Header(byte[] data) {
-        if (data == null || data.length < 10) return 0;
-        // ID3 header starts with 'I', 'D', '3'
-        if (data[0] == 'I' && data[1] == 'D' && data[2] == '3') {
-            int size = (data[6] & 0x7F) << 21
-                    | (data[7] & 0x7F) << 14
-                    | (data[8] & 0x7F) << 7
-                    | (data[9] & 0x7F);
-            int totalHeader = 10 + size;
-            // Check for optional footer flag
-            if ((data[5] & 0x10) != 0) {
-                totalHeader += 10;
-            }
-            if (totalHeader < data.length) {
-                return totalHeader;
-            }
-        }
-        return 0;
-    }
-
-    private String generateCacheKey(String text, String lang, String voice) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            String input = text + "|" + lang + "|" + voice;
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hexString = new StringBuilder(2 * hash.length);
-            for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) {
-                    hexString.append('0');
-                }
-                hexString.append(hex);
-            }
-            return hexString.toString();
-        } catch (Exception e) {
-            return String.valueOf(Math.abs((text + lang + voice).hashCode()));
-        }
-    }
-
-    private byte[] fetchTtsAudioChunk(String chunk, String lang) throws Exception {
-        Exception lastException = null;
-        String encodedText = URLEncoder.encode(chunk, StandardCharsets.UTF_8.toString());
-
-        // Vòng 1: Thử lần lượt các endpoint dự phòng (Google APIs, Google VN, Google COM)
-        for (String baseUrl : GOOGLE_TTS_ENDPOINTS) {
-            String fullUrlStr = baseUrl + lang + "&q=" + encodedText;
-            try {
-                byte[] audio = tryFetchChunkFromUrl(fullUrlStr, chunk);
-                if (audio != null && audio.length > 0) {
-                    return audio;
-                }
-            } catch (Exception e) {
-                lastException = e;
-                System.err.println("Google TTS endpoint " + baseUrl + " error: " + e.getMessage() + ". Trying next endpoint...");
-            }
-        }
-
-        // Vòng 2: Nếu vòng 1 chưa lấy được, chờ 800ms rồi thử lại một lượt cuối
-        try {
-            Thread.sleep(800);
-        } catch (InterruptedException ignored) {}
-
-        for (String baseUrl : GOOGLE_TTS_ENDPOINTS) {
-            String fullUrlStr = baseUrl + lang + "&q=" + encodedText;
-            try {
-                byte[] audio = tryFetchChunkFromUrl(fullUrlStr, chunk);
-                if (audio != null && audio.length > 0) {
-                    return audio;
-                }
-            } catch (Exception e) {
-                lastException = e;
-            }
-        }
-
-        throw (lastException != null) ? lastException : new RuntimeException("Tất cả các endpoint Google TTS đều không phản hồi.");
-    }
-
-    private byte[] tryFetchChunkFromUrl(String fullUrlStr, String chunk) throws Exception {
-        HttpURLConnection conn = null;
-        try {
-            URL url = new URL(fullUrlStr);
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
-            conn.setRequestProperty("Referer", "https://translate.google.com/");
-            conn.setRequestProperty("Accept-Language", "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7");
-            conn.setRequestProperty("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8");
-            conn.setRequestProperty("Connection", "keep-alive");
-            conn.setConnectTimeout(3500);
-            conn.setReadTimeout(6000);
-
-            int responseCode = conn.getResponseCode();
-            if (responseCode != HttpURLConnection.HTTP_OK) {
-                throw new RuntimeException("Google TTS HTTP status: " + responseCode);
-            }
-
-            try (InputStream inputStream = conn.getInputStream();
-                 ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
-                byte[] data = new byte[4096];
-                int nRead;
-                while ((nRead = inputStream.read(data, 0, data.length)) != -1) {
-                    buffer.write(data, 0, nRead);
-                }
-                byte[] audioData = buffer.toByteArray();
-
-                int minExpectedSize = Math.min(1500, chunk.length() * 20);
-                if (chunk.length() > 10 && audioData.length < minExpectedSize) {
-                    throw new RuntimeException("TTS Audio suspiciously small: " + audioData.length + " bytes");
-                }
-
-                return audioData;
-            }
-        } finally {
-            if (conn != null) {
-                conn.disconnect();
-            }
-        }
-    }
-
-    public List<String> splitTextForTts(String text, int maxLength) {
-        List<String> result = new ArrayList<>();
-        String sanitized = text.replaceAll("\\s+", " ").trim();
-
-        if (sanitized.length() <= maxLength) {
-            result.add(sanitized);
-            return result;
-        }
-
-        // Tách câu ưu tiên theo dấu câu tự nhiên
-        String[] clauses = sanitized.split("(?<=[.!?,;:])\\s+");
-        StringBuilder currentChunk = new StringBuilder();
-
-        for (String clause : clauses) {
-            clause = clause.trim();
-            if (clause.isEmpty()) continue;
-
-            if (currentChunk.length() + clause.length() + 1 <= maxLength) {
-                if (currentChunk.length() > 0) {
-                    currentChunk.append(" ");
-                }
-                currentChunk.append(clause);
-            } else {
-                if (currentChunk.length() > 0) {
-                    result.add(currentChunk.toString().trim());
-                    currentChunk.setLength(0);
-                }
-
-                if (clause.length() <= maxLength) {
-                    currentChunk.append(clause);
-                } else {
-                    // Nếu một mệnh đề vẫn dài hơn maxLength, ngắt theo từ
-                    String[] words = clause.split(" ");
-                    for (String word : words) {
-                        if (currentChunk.length() + word.length() + 1 <= maxLength) {
-                            if (currentChunk.length() > 0) {
-                                currentChunk.append(" ");
-                            }
-                            currentChunk.append(word);
-                        } else {
-                            if (currentChunk.length() > 0) {
-                                result.add(currentChunk.toString().trim());
-                                currentChunk.setLength(0);
-                            }
-                            currentChunk.append(word);
-                        }
-                    }
+    // Bộ nhớ đệm LRU giữ 200 câu gần nhất để giảm tải request lên Google
+    private final Map<String, byte[]> audioCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, byte[]> eldest) {
+                    return size() > 200;
                 }
             }
+    );
+
+    public byte[] synthesizeGoogleTts(String rawText, String lang) {
+        if (rawText == null || rawText.isBlank()) {
+            throw new IllegalArgumentException("Văn bản trống");
         }
 
-        if (currentChunk.length() > 0) {
-            result.add(currentChunk.toString().trim());
+        String cleanText = rawText.trim();
+        String cacheKey = lang + ":" + cleanText;
+        if (audioCache.containsKey(cacheKey)) {
+            return audioCache.get(cacheKey);
         }
 
+        List<String> chunks = splitIntoSafeChunks(cleanText, MAX_CHUNK_LENGTH);
+        ByteArrayOutputStream combinedAudio = new ByteArrayOutputStream();
+
+        for (String chunk : chunks) {
+            byte[] chunkBytes = fetchChunkWithRetry(chunk, lang);
+            combinedAudio.writeBytes(chunkBytes);
+        }
+
+        byte[] result = combinedAudio.toByteArray();
+        audioCache.put(cacheKey, result);
         return result;
+    }
+
+    private byte[] fetchChunkWithRetry(String chunk, String lang) {
+        String encodedText = URLEncoder.encode(chunk, StandardCharsets.UTF_8);
+        Exception lastError = null;
+
+        // Thử lần lượt qua 3 client của Google nếu gặp lỗi mạng hoặc rate-limit
+        for (int attempt = 0; attempt < GOOGLE_CLIENTS.length; attempt++) {
+            String client = GOOGLE_CLIENTS[attempt];
+            String url = String.format(
+                    "https://translate.google.com/translate_tts?ie=UTF-8&q=%s&tl=%s&total=1&idx=0&textlen=%d&client=%s",
+                    encodedText, lang, chunk.length(), client
+            );
+
+            try {
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .timeout(Duration.ofSeconds(10))
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                        .header("Referer", "https://translate.google.com/")
+                        .GET()
+                        .build();
+
+                HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                byte[] body = response.body();
+
+                // Kiểm tra kích thước audio hợp lệ (tránh lỗi HTTP 200 nhưng trả về file rỗng/hỏng)
+                if (response.statusCode() == 200 && body != null && body.length > 200) {
+                    return body;
+                }
+                lastError = new RuntimeException("Google TTS trả về dữ liệu không hợp lệ (status=" + response.statusCode() + ")");
+            } catch (Exception e) {
+                lastError = e;
+            }
+
+            // Nghỉ ngắn 250ms trước khi đổi sang client dự phòng
+            try { Thread.sleep(250L * (attempt + 1)); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+        }
+
+        throw new RuntimeException("Không thể tải giọng đọc Google sau khi thử lại: " + (lastError != null ? lastError.getMessage() : ""));
+    }
+
+    private List<String> splitIntoSafeChunks(String text, int maxLen) {
+        if (text.length() <= maxLen) {
+            return Collections.singletonList(text);
+        }
+        List<String> chunks = new ArrayList<>();
+        String[] parts = text.split("(?<=[,;:.!?—\\-])\\s+");
+        StringBuilder current = new StringBuilder();
+
+        for (String part : parts) {
+            if (current.length() + part.length() + 1 <= maxLen) {
+                if (!current.isEmpty()) current.append(" ");
+                current.append(part);
+            } else {
+                if (!current.isEmpty()) {
+                    chunks.add(current.toString());
+                    current.setLength(0);
+                }
+                // Nếu bản thân 1 vế vẫn dài hơn maxLen thì cắt theo khoảng trắng
+                if (part.length() > maxLen) {
+                    String[] words = part.split("\\s+");
+                    for (String w : words) {
+                        if (current.length() + w.length() + 1 <= maxLen) {
+                            if (!current.isEmpty()) current.append(" ");
+                            current.append(w);
+                        } else {
+                            if (!current.isEmpty()) chunks.add(current.toString());
+                            current = new StringBuilder(w);
+                        }
+                    }
+                } else {
+                    current.append(part);
+                }
+            }
+        }
+        if (!current.isEmpty()) {
+            chunks.add(current.toString());
+        }
+        return chunks;
     }
 }

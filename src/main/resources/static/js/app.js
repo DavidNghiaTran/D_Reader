@@ -22,14 +22,12 @@ const App = {
         if (targetView) targetView.classList.add('active');
 
         const ttsBar = document.getElementById('ttsBar');
-        const zenBtn = document.getElementById('btnToggleZen');
         const isReader = viewId === 'readerView';
 
         // TTS bar: controlled by its own tts-hidden class in reader.js
         if (ttsBar && !isReader) {
             ttsBar.classList.add('tts-hidden');
         }
-        if (zenBtn) zenBtn.style.display = isReader ? 'flex' : 'none';
 
         document.body.style.overflow = isReader ? 'hidden' : '';
     },
