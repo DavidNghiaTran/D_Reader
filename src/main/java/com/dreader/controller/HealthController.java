@@ -20,7 +20,7 @@ public class HealthController {
     @Autowired
     private StorageService storageService;
 
-    @GetMapping
+    @RequestMapping(method = {RequestMethod.GET, RequestMethod.POST})
     public ResponseEntity<Map<String, Object>> checkHealth() {
         Map<String, Object> health = new HashMap<>();
         health.put("status", "UP");
@@ -45,5 +45,14 @@ public class HealthController {
         health.put("ttsEngine", "Google TTS");
 
         return ResponseEntity.ok(health);
+    }
+
+    @RequestMapping(value = "/shutdown", method = {RequestMethod.GET, RequestMethod.POST})
+    public ResponseEntity<String> shutdown() {
+        new Thread(() -> {
+            try { Thread.sleep(600); } catch (Exception ignored) {}
+            System.exit(0);
+        }).start();
+        return ResponseEntity.ok("D_Reader is shutting down...");
     }
 }

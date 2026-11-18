@@ -20,11 +20,15 @@ public class StorageService {
     @Value("${storage.location.covers:D:/D_Reader/storage/covers}")
     private String coversLocation;
 
+    @Value("${storage.location.tts-cache:./storage/tts_cache}")
+    private String ttsCacheLocation;
+
     @PostConstruct
     public void init() {
         try {
             Files.createDirectories(Paths.get(booksLocation));
             Files.createDirectories(Paths.get(coversLocation));
+            Files.createDirectories(Paths.get(ttsCacheLocation));
         } catch (IOException e) {
             throw new RuntimeException("Could not initialize storage directories", e);
         }
@@ -36,6 +40,10 @@ public class StorageService {
 
     public Path getCoversPath() {
         return Paths.get(coversLocation);
+    }
+
+    public Path getTtsCachePath() {
+        return Paths.get(ttsCacheLocation);
     }
 
     public String saveBookFile(MultipartFile file) throws IOException {

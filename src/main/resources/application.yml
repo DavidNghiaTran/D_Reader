@@ -23,8 +23,8 @@ spring:
         dialect: org.hibernate.dialect.MySQLDialect
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 50MB
+      max-file-size: 150MB
+      max-request-size: 150MB
   sql:
     init:
       mode: always
@@ -34,3 +34,4 @@ storage:
   location:
     books: ./storage/books
     covers: ./storage/covers
+    tts-cache: ./storage/tts_cache

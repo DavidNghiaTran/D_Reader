@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>D_Reader - Trình đọc EPUB & TTS Tiếng Việt</title>
-    <meta name="description" content="D_Reader – đọc sách EPUB và nghe TTS Tiếng Việt chất lượng cao ngay trên trình duyệt.">
+    <title>D_Reader - Trình đọc Sách Đa Định Dạng & TTS Tiếng Việt</title>
+    <meta name="description" content="D_Reader – đọc sách EPUB, PDF, MOBI, AZW3, TXT, DOCX và nghe TTS Tiếng Việt chất lượng cao ngay trên trình duyệt.">
 
     <!-- Google Fonts & Remix Icons -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,7 +14,7 @@
 
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
     <!-- CSS -->
-    <link rel="stylesheet" href="/css/app.css?v=26">
+    <link rel="stylesheet" href="/css/app.css?v=130">
 
     <!-- EPUB.js & JSZip Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -35,7 +35,10 @@
         </div>
         <div class="header-actions">
             <button class="btn btn-primary" id="btnUploadModal">
-                <i class="ri-upload-cloud-2-line"></i> Tải sách EPUB
+                <i class="ri-upload-cloud-2-line"></i> Tải sách mới
+            </button>
+            <button class="btn btn-secondary" id="btnExitApp" title="Thoát ứng dụng D_Reader" style="color:#f87171;border-color:rgba(239,68,68,0.3);">
+                <i class="ri-shut-down-line"></i> Thoát
             </button>
         </div>
     </header>
@@ -109,8 +112,8 @@
             <!-- Reader Top Toolbar -->
             <div class="reader-toolbar" id="readerToolbar">
                 <div class="toolbar-left">
-                    <button class="btn btn-secondary" id="btnBackToLibrary">
-                        <i class="ri-arrow-left-line"></i> Thư viện
+                    <button class="btn btn-secondary" id="btnBackToLibrary" title="Quay về Thư viện sách">
+                        <i class="ri-arrow-left-line"></i> <span>Thư viện</span>
                     </button>
                     <button class="btn btn-secondary btn-icon" id="btnToggleToc" title="Mục lục & Dấu trang (M)">
                         <i class="ri-menu-line"></i>
@@ -119,38 +122,41 @@
                         <i class="ri-bookmark-add-line"></i>
                     </button>
                     <div class="current-book-title" id="currentBookTitle">Tiêu đề sách</div>
-                    <span id="saveIndicator" class="save-indicator"><i class="ri-check-line"></i> Đã lưu</span>
+                    <span id="saveIndicator" class="save-indicator"><i class="ri-check-line"></i> <span>Đã lưu</span></span>
                 </div>
                 <div class="toolbar-right">
                     <select id="selectTheme" class="select-control" title="Chế độ màu">
-                        <option value="dark">🌙 Tối (Dark)</option>
-                        <option value="light">☀️ Sáng (Light)</option>
+                        <option value="dark">🌙 Tối</option>
+                        <option value="light">☀️ Sáng</option>
                         <option value="sepia">📜 Sepia</option>
                         <option value="mint">🌿 Mint</option>
                     </select>
                     <select id="selectFont" class="select-control" title="Font chữ">
-                        <option value="sans-serif">Sans-serif (Be Vietnam Pro)</option>
-                        <option value="serif">Serif (Literata / Merriweather)</option>
-                        <option value="lora">Lora (Trang nhã)</option>
+                        <option value="sans-serif">Sans-serif</option>
+                        <option value="serif">Serif</option>
+                        <option value="lora">Lora</option>
                     </select>
                     <select id="selectReadMode" class="select-control" title="Chế độ đọc">
-                        <option value="scrolled-doc">↕ Cuộn dọc</option>
-                        <option value="paginated">⇄ Lật trang</option>
+                        <option value="scrolled-doc">↕ Cuộn</option>
+                        <option value="paginated">⇄ Lật</option>
                     </select>
                     <select id="selectContentWidth" class="select-control" title="Độ rộng trang đọc">
-                        <option value="standard">📏 Vừa (1000px)</option>
-                        <option value="wide" selected>📐 Rộng (1350px)</option>
-                        <option value="extra">↔ Rất rộng (1600px)</option>
-                        <option value="full">🖥️ Tràn viền (Toàn màn hình)</option>
-                        <option value="columns">📖 Hai cột (Sách mở)</option>
+                        <option value="standard">📏 1000px</option>
+                        <option value="wide" selected>📐 1350px</option>
+                        <option value="extra">📐 1600px</option>
+                        <option value="full">↔ Tràn viền</option>
+                        <option value="columns">📖 2 cột</option>
                     </select>
-                    <div style="display:flex;align-items:center;gap:0.25rem;">
-                        <button class="btn btn-secondary btn-icon" id="btnFontLess" title="Thu nhỏ chữ"><i class="ri-subtract-line"></i></button>
-                        <span id="fontSizeDisplay" style="font-size:0.82rem;font-weight:700;min-width:38px;text-align:center;color:var(--text-primary);">16px</span>
-                        <button class="btn btn-secondary btn-icon" id="btnFontMore" title="Phóng to chữ"><i class="ri-add-line"></i></button>
+                    <div class="font-size-control">
+                        <button class="btn btn-secondary btn-icon" id="btnFontLess" title="Thu nhỏ chữ (Phím -)"><i class="ri-subtract-line"></i></button>
+                        <span id="fontSizeDisplay">16px</span>
+                        <button class="btn btn-secondary btn-icon" id="btnFontMore" title="Phóng to chữ (Phím +)"><i class="ri-add-line"></i></button>
                     </div>
                     <button class="btn btn-secondary btn-icon" id="btnFullscreen" title="Toàn màn hình (F)">
                         <i class="ri-fullscreen-line"></i>
+                    </button>
+                    <button class="btn btn-secondary btn-icon" id="btnOpenReplaceRules" title="Bộ lọc từ & Regex thay thế">
+                        <i class="ri-filter-3-line"></i>
                     </button>
                 </div>
             </div>
@@ -312,15 +318,18 @@
     <div class="modal-overlay" id="uploadModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3><i class="ri-upload-cloud-2-line" style="color:var(--accent);margin-right:0.4rem;"></i>Tải sách EPUB mới</h3>
+                <h3><i class="ri-upload-cloud-2-line" style="color:var(--accent);margin-right:0.4rem;"></i>Tải sách lên thư viện</h3>
                 <button class="btn-close" id="btnCloseModal"><i class="ri-close-line"></i></button>
             </div>
             <div class="modal-body">
                 <div class="dropzone" id="dropzone">
                     <i class="ri-file-upload-line"></i>
-                    <p>Kéo và thả tệp <strong>.epub</strong> vào đây<br>hoặc <strong>nhấn để chọn tệp</strong></p>
-                    <p style="font-size:0.75rem;margin-top:0.5rem;opacity:0.6;">Hỗ trợ tối đa 50MB</p>
-                    <input type="file" id="fileInput" accept=".epub" hidden>
+                    <p>Kéo và thả sách vào đây<br>hoặc <strong>nhấn để chọn tệp</strong></p>
+                    <div class="dropzone-formats">
+                        <span>EPUB</span><span>PDF</span><span>MOBI</span><span>AZW3</span><span>TXT</span><span>DOCX</span>
+                    </div>
+                    <p style="font-size:0.75rem;margin-top:0.45rem;opacity:0.65;">Hỗ trợ tối đa 150MB — Tự động tách chương &amp; đồng bộ TTS</p>
+                    <input type="file" id="fileInput" accept=".epub,.pdf,.mobi,.azw3,.txt,.docx" hidden>
                 </div>
                 <div id="uploadProgress" class="progress-bar-container" style="display:none;">
                     <div class="progress-bar" id="progressBar"></div>
@@ -358,6 +367,35 @@
     </div>
 
     <!-- ====================================================
+         MODAL REPLACE RULES (REGEX & WATERMARK REMOVAL)
+         ==================================================== -->
+    <div class="modal-overlay" id="modalReplaceRules">
+        <div class="modal-content" style="max-width:540px;">
+            <div class="modal-header">
+                <h3><i class="ri-filter-3-line" style="color:var(--accent);margin-right:0.4rem;"></i>Bộ lọc từ & Regex thay thế</h3>
+                <button class="btn-close" id="btnCloseReplaceRulesModal"><i class="ri-close-line"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:0.8rem;">
+                    Tự động xóa watermark rác (truyenfull, tangthuvien, các ký tự thừa) trước khi hiển thị và trước khi đọc TTS.
+                </p>
+                <div style="display:flex;gap:0.4rem;margin-bottom:0.8rem;">
+                    <input type="text" id="inputReplacePattern" class="select-control" style="flex:2;padding:0.45rem 0.6rem;" placeholder="Từ cần tìm / Regex (vd: truyenfull\.vn)">
+                    <input type="text" id="inputReplaceReplacement" class="select-control" style="flex:1.2;padding:0.45rem 0.6rem;" placeholder="Thay bằng (để trống=xóa)">
+                    <button class="btn btn-primary" id="btnAddReplaceRule" style="white-space:nowrap;"><i class="ri-add-line"></i> Thêm</button>
+                </div>
+                <div id="replaceRulesList" style="max-height:220px;overflow-y:auto;margin-bottom:1rem;border:1px solid var(--border-color);border-radius:6px;padding:0.4rem;background:var(--bg-secondary);">
+                    <!-- Danh sách quy tắc -->
+                </div>
+                <div style="display:flex;gap:0.75rem;justify-content:flex-end;">
+                    <button class="btn btn-secondary" id="btnCancelReplaceRules">Đóng</button>
+                    <button class="btn btn-primary" id="btnSaveReplaceRules"><i class="ri-save-line"></i> Lưu bộ lọc</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====================================================
          MODAL DELETE
          ==================================================== -->
     <div class="modal-overlay" id="deleteModal">
@@ -379,10 +417,13 @@
 <div id="toastContainer" class="toast-container"></div>
 
 <!-- JS Application Scripts -->
-<script src="/js/app.js?v=26"></script>
-<script src="/js/tts-engine.js?v=26"></script>
-<script src="/js/library.js?v=26"></script>
-<script src="/js/reader.js?v=26"></script>
+<script src="/js/reader.js?v=130"></script>
+<script src="/js/reader-enhancements.js?v=130"></script>
+<script src="/js/tts-engine.js?v=130"></script>
+<script src="/js/library.js?v=130"></script>
+<script src="/js/app.js?v=130"></script>
 </body>
 </html>
+
+
 

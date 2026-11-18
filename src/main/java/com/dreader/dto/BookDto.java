@@ -17,6 +17,7 @@ public class BookDto {
     private Long fileSize;
     private String fileHash;
     private Integer totalChapters;
+    private String originalFormat;
     private String processingStatus;
     private LocalDateTime createdAt;
     private Float progressPercentage;
@@ -67,6 +68,9 @@ public class BookDto {
 
     public Integer getTotalChapters() { return totalChapters; }
     public void setTotalChapters(Integer totalChapters) { this.totalChapters = totalChapters; }
+
+    public String getOriginalFormat() { return originalFormat; }
+    public void setOriginalFormat(String originalFormat) { this.originalFormat = originalFormat; }
 
     public String getProcessingStatus() { return processingStatus; }
     public void setProcessingStatus(String processingStatus) { this.processingStatus = processingStatus; }

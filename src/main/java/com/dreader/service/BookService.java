@@ -38,6 +38,17 @@ public class BookService {
     @Autowired
     private StorageService storageService;
 
+    @Autowired
+    private FormatConverterService formatConverterService;
+
+    public String calculateFileHash(MultipartFile file) {
+        return calculateSha256(file);
+    }
+
+    public boolean existsByFileHash(String fileHash) {
+        return bookRepository.existsByFileHash(fileHash);
+    }
+
     @Transactional
     public BookDto uploadBook(MultipartFile file) throws IOException {
         String fileHash = calculateSha256(file);
@@ -50,10 +61,22 @@ public class BookService {
             return convertToDto(b, pOpt.orElse(null));
         }
 
-        String savedFilePath = storageService.saveBookFile(file);
+        String detectedFmt = FormatConverterService.detectFormat(file.getOriginalFilename());
+        String originalFormat = detectedFmt != null ? detectedFmt : "EPUB";
+
+        String savedFilePath;
+        if ("EPUB".equalsIgnoreCase(originalFormat)) {
+            savedFilePath = storageService.saveBookFile(file);
+        } else {
+            savedFilePath = formatConverterService.convertToEpubAndStore(file, originalFormat);
+        }
         File savedFile = new File(savedFilePath);
 
         EpubParser.Metadata metadata = EpubParser.parseEpub(savedFile);
+        String savedBaseUuid = savedFile.getName().replaceAll("(?i)\\.epub$", "");
+        if (metadata.getTitle() == null || metadata.getTitle().isBlank() || metadata.getTitle().equalsIgnoreCase(savedBaseUuid)) {
+            metadata.setTitle(FormatConverterService.extractCleanBaseTitle(file.getOriginalFilename()));
+        }
 
         String savedCoverPath = null;
         if (metadata.getCoverBytes() != null && metadata.getCoverBytes().length > 0) {
@@ -61,17 +84,18 @@ public class BookService {
         }
 
         Book book = new Book();
-        book.setTitle(metadata.getTitle());
-        book.setAuthor(metadata.getAuthor());
+        book.setTitle(safeTruncate(metadata.getTitle(), 500));
+        book.setAuthor(safeTruncate(metadata.getAuthor(), 255));
         book.setDescription(metadata.getDescription());
-        book.setLanguage(metadata.getLanguage() != null ? metadata.getLanguage() : "vi");
-        book.setPublisher(metadata.getPublisher());
-        book.setIsbn(metadata.getIsbn());
+        book.setLanguage(safeTruncate(metadata.getLanguage() != null ? metadata.getLanguage() : "vi", 50));
+        book.setPublisher(safeTruncate(metadata.getPublisher(), 255));
+        book.setIsbn(safeTruncate(metadata.getIsbn(), 255));
         book.setFilePath(savedFilePath);
         book.setCoverPath(savedCoverPath);
         book.setFileSize(file.getSize());
         book.setFileHash(fileHash);
         book.setTotalChapters(metadata.getTotalChapters());
+        book.setOriginalFormat(originalFormat);
         book.setProcessingStatus("READY");
 
         Book savedBook = bookRepository.save(book);
@@ -168,6 +192,9 @@ public class BookService {
         dto.setFileSize(book.getFileSize());
         dto.setFileHash(book.getFileHash());
         dto.setTotalChapters(book.getTotalChapters());
+        dto.setOriginalFormat(book.getOriginalFormat() != null && !book.getOriginalFormat().isBlank()
+                ? book.getOriginalFormat().toUpperCase()
+                : "EPUB");
         dto.setProcessingStatus(book.getProcessingStatus());
         dto.setCreatedAt(book.getCreatedAt());
 
@@ -184,5 +211,96 @@ public class BookService {
         }
 
         return dto;
+    }
+
+    private static String safeTruncate(String value, int maxLength) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.length() <= maxLength ? trimmed : trimmed.substring(0, maxLength);
+    }
+
+    public String cleanAndFormatChapterHtml(String rawHtml) {
+        return EpubParser.cleanAndFormatChapterHtml(rawHtml);
+    }
+
+    public List<EpubParser.ChapterInfo> getBookToc(Long bookId) {
+        Book book = getBookEntityById(bookId);
+        File epubFile = new File(book.getFilePath());
+        if (!epubFile.exists()) {
+            throw new RuntimeException("Tệp EPUB không tồn tại: " + book.getFilePath());
+        }
+        List<EpubParser.ChapterInfo> toc = EpubParser.extractToc(epubFile);
+        if (toc != null && !toc.isEmpty() && (book.getTotalChapters() == null || book.getTotalChapters() < toc.size())) {
+            book.setTotalChapters(toc.size());
+            bookRepository.save(book);
+        }
+        return toc;
+    }
+
+    public com.dreader.dto.ChapterContentDto getChapterContent(Long bookId, int chapterIndex) {
+        Book book = getBookEntityById(bookId);
+        File epubFile = new File(book.getFilePath());
+        if (!epubFile.exists()) {
+            throw new RuntimeException("Tệp EPUB không tồn tại: " + book.getFilePath());
+        }
+
+        List<EpubParser.ChapterInfo> toc = EpubParser.extractToc(epubFile);
+        int total = toc.size();
+        if (chapterIndex < 0 || chapterIndex >= total) {
+            throw new IllegalArgumentException("Chỉ mục chương không hợp lệ: " + chapterIndex + " (Tổng số: " + total + ")");
+        }
+
+        EpubParser.ChapterInfo chapterInfo = toc.get(chapterIndex);
+        String rawHref = chapterInfo.getHref();
+        String fileHref = rawHref.contains("#") ? rawHref.split("#")[0] : rawHref;
+
+        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(epubFile)) {
+            java.util.zip.ZipEntry targetEntry = null;
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                java.util.zip.ZipEntry e = entries.nextElement();
+                String name = e.getName();
+                if (name.equals(fileHref) || name.endsWith("/" + fileHref) || fileHref.endsWith(name) || name.equalsIgnoreCase(fileHref)) {
+                    targetEntry = e;
+                    break;
+                }
+            }
+
+            if (targetEntry == null) {
+                String simpleName = fileHref.contains("/") ? fileHref.substring(fileHref.lastIndexOf('/') + 1) : fileHref;
+                entries = zip.entries();
+                while (entries.hasMoreElements()) {
+                    java.util.zip.ZipEntry e = entries.nextElement();
+                    if (e.getName().endsWith(simpleName)) {
+                        targetEntry = e;
+                        break;
+                    }
+                }
+            }
+
+            if (targetEntry == null) {
+                throw new RuntimeException("Không tìm thấy tệp nội dung chương trong file EPUB: " + fileHref);
+            }
+
+            String rawContent;
+            try (java.io.InputStream is = zip.getInputStream(targetEntry)) {
+                rawContent = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+
+            org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parse(rawContent);
+            doc.select("script, style, link[rel=stylesheet]").remove();
+            String cleanHtml = cleanAndFormatChapterHtml(doc.body().html());
+
+            return new com.dreader.dto.ChapterContentDto(
+                    chapterIndex,
+                    chapterInfo.getTitle(),
+                    chapterInfo.getHref(),
+                    cleanHtml,
+                    total
+            );
+
+        } catch (Exception e) {
+            throw new RuntimeException("Lỗi khi đọc nội dung chương: " + e.getMessage(), e);
+        }
     }
 }

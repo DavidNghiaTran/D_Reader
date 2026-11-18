@@ -3,6 +3,7 @@ package com.dreader.controller;
 import com.dreader.dto.BookDto;
 import com.dreader.entity.Book;
 import com.dreader.service.BookService;
+import com.dreader.service.FormatConverterService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
@@ -29,12 +30,20 @@ public class BookController {
     public ResponseEntity<?> uploadBook(@RequestParam("file") MultipartFile file) {
         try {
             if (file.isEmpty()) {
-                return ResponseEntity.badRequest().body("File upload cannot be empty.");
+                return ResponseEntity.badRequest().body("Tệp tải lên không được để trống.");
             }
-            if (!file.getOriginalFilename().toLowerCase().endsWith(".epub")) {
-                return ResponseEntity.badRequest().body("Only .epub files are supported.");
+            String origName = file.getOriginalFilename();
+            if (!FormatConverterService.isSupportedFilename(origName)) {
+                return ResponseEntity.badRequest().body("Định dạng không được hỗ trợ. Vui lòng chọn tệp .epub, .pdf, .mobi, .azw3, .txt hoặc .docx.");
             }
+            String fileHash = bookService.calculateFileHash(file);
+            boolean isDuplicate = bookService.existsByFileHash(fileHash);
             BookDto bookDto = bookService.uploadBook(file);
+            if (isDuplicate) {
+                return ResponseEntity.ok()
+                        .header("X-Book-Duplicate", "true")
+                        .body(bookDto);
+            }
             return ResponseEntity.status(HttpStatus.CREATED).body(bookDto);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -100,5 +109,17 @@ public class BookController {
                 .contentType(MediaType.parseMediaType(contentType))
                 .header(HttpHeaders.CACHE_CONTROL, "public, max-age=604800")
                 .body(resource);
+    }
+
+    @GetMapping("/{id}/toc")
+    public ResponseEntity<List<com.dreader.util.EpubParser.ChapterInfo>> getBookToc(@PathVariable("id") Long id) {
+        return ResponseEntity.ok(bookService.getBookToc(id));
+    }
+
+    @GetMapping("/{id}/chapters/{chapterIndex}")
+    public ResponseEntity<com.dreader.dto.ChapterContentDto> getChapterContent(
+            @PathVariable("id") Long id,
+            @PathVariable("chapterIndex") int chapterIndex) {
+        return ResponseEntity.ok(bookService.getChapterContent(id, chapterIndex));
     }
 }

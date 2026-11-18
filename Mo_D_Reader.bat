@@ -33,7 +33,29 @@ curl -s -f -o nul --connect-timeout 1 http://localhost:8080/api/health
 if %errorlevel% neq 0 goto WAIT_LOOP
 
 :OPEN_BROWSER
-REM 6. Mo Google Chrome o che do cua so ung dung (App Mode)
+REM 6. Mo Edge hoac Google Chrome o che do cua so ung dung (App Mode)
 echo [D_Reader] May chu da san sang, dang mo giao dien...
-start "" chrome.exe --app=http://localhost:8080
+where chrome.exe >nul 2>&1
+if %errorlevel% equ 0 (
+    start "" chrome.exe --app=http://localhost:8080
+    exit
+)
+
+where msedge.exe >nul 2>&1
+if %errorlevel% equ 0 (
+    start "" msedge.exe --app=http://localhost:8080
+    exit
+)
+
+if exist "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" (
+    start "" "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe" --app=http://localhost:8080
+    exit
+)
+
+if exist "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" (
+    start "" "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe" --app=http://localhost:8080
+    exit
+)
+
+start "" http://localhost:8080
 exit

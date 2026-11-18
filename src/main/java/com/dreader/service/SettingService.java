@@ -53,6 +53,7 @@ public class SettingService {
         if (input.getAutoContinue() != null) existing.setAutoContinue(input.getAutoContinue());
         if (input.getAutoScroll() != null) existing.setAutoScroll(input.getAutoScroll());
         if (input.getHighlightEnabled() != null) existing.setHighlightEnabled(input.getHighlightEnabled());
+        if (input.getReplaceRules() != null) existing.setReplaceRules(input.getReplaceRules());
         return settingRepository.save(existing);
     }
 }

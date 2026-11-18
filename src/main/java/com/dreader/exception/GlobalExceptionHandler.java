@@ -22,6 +22,12 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
     }
 
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<?> handleMaxSizeException(org.springframework.web.multipart.MaxUploadSizeExceededException e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body("Dung lượng tệp vượt quá giới hạn cho phép (tối đa 150MB).");
+    }
+
     @ExceptionHandler(IOException.class)
     public void handleClientAbort(IOException e) {
         // Trình duyệt hoặc client ngắt kết nối giữa chừng (ví dụ: người dùng đổi câu hoặc tạm dừng)

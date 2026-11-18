@@ -9,4 +9,6 @@ import java.util.Optional;
 @Repository
 public interface BookRepository extends JpaRepository<Book, Long> {
     Optional<Book> findByFileHash(String fileHash);
+    boolean existsByFileHash(String fileHash);
 }
+

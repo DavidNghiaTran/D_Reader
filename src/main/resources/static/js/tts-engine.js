@@ -19,13 +19,15 @@ const TTSEngine = {
 
     // Audio Providers
     audioPlayer: null, // HTML5 Audio for Google Cloud TTS
-    nextAudioCache: { index: -1, blobUrl: null }, // Blob URL cache for pre-fetched next sentence
+    audioBlobCache: new Map(), // Blob URL cache: index -> blobUrl (pre-fetched N+1, N+2)
+    nextAudioCache: { index: -1, blobUrl: null }, // Compatibility fallback
     synth: window.speechSynthesis,
     voices: [],
     selectedVoiceUri: 'google-translate-vi',
 
     // Highlight tracking
     highlightElement: null,
+    currentHighlightSpan: null,
     lastHighlightNode: null,
     errorCount: 0,
 
@@ -44,6 +46,11 @@ const TTSEngine = {
         if (this.synth && this.synth.onvoiceschanged !== undefined) {
             this.synth.onvoiceschanged = () => this.populateVoiceSelect();
         }
+    },
+
+    // Backward compatibility no-op
+    initAudioContext() {
+        // No-op for compatibility
     },
 
     bindEvents() {
@@ -274,32 +281,51 @@ const TTSEngine = {
         this.populateVoiceSelect();
     },
 
-    // Hàm tải ngầm câu tiếp theo trong lúc đang đọc câu hiện tại
-    prefetchNextSentence(nextIndex, token) {
-        if (nextIndex >= this.sentences.length) return;
-        const rawNext = this.sentences[nextIndex]?.clean || this.sentences[nextIndex]?.text || this.sentences[nextIndex]?.raw || this.sentences[nextIndex];
-        const cleanNext = this.sanitizeText(rawNext);
-        if (!cleanNext || !/[\p{L}\p{N}]/u.test(cleanNext)) return;
+    // Tải trước các câu tiếp theo (N+1, N+2) vào bộ nhớ RAM blob URL
+    prefetchNextSentences(currentIndex, token) {
+        if (!this.sentences || !this.sentences.length) return;
+        [currentIndex + 1, currentIndex + 2].forEach(nextIdx => {
+            if (nextIdx >= this.sentences.length) return;
+            if (this.audioBlobCache && this.audioBlobCache.has(nextIdx)) return;
 
-        if (this.currentFetchController) {
-            try { this.currentFetchController.abort(); } catch (e) {}
+            const rawNext = this.sentences[nextIdx]?.clean || this.sentences[nextIdx]?.text || this.sentences[nextIdx]?.raw || this.sentences[nextIdx];
+            const cleanNext = this.sanitizeText(rawNext);
+            if (!cleanNext || !/[\p{L}\p{N}]/u.test(cleanNext)) return;
+
+            const url = `/api/tts/speak?text=${encodeURIComponent(cleanNext)}&lang=vi`;
+            fetch(url)
+                .then(res => res.ok ? res.blob() : Promise.reject())
+                .then(blob => {
+                    if (token !== this.playToken) return;
+                    if (this.audioBlobCache && !this.audioBlobCache.has(nextIdx)) {
+                        this.audioBlobCache.set(nextIdx, URL.createObjectURL(blob));
+                    }
+                })
+                .catch(() => {});
+        });
+    },
+
+    clearAudioBlobCache() {
+        if (this.audioBlobCache) {
+            for (const url of this.audioBlobCache.values()) {
+                try { URL.revokeObjectURL(url); } catch(e) {}
+            }
+            this.audioBlobCache.clear();
         }
-        this.currentFetchController = new AbortController();
+        if (this.nextAudioCache && this.nextAudioCache.blobUrl) {
+            try { URL.revokeObjectURL(this.nextAudioCache.blobUrl); } catch(e) {}
+            this.nextAudioCache = { index: -1, blobUrl: null };
+        }
+    },
 
-        const url = `/api/tts/speak?text=${encodeURIComponent(cleanNext)}&lang=vi`;
-        fetch(url, { signal: this.currentFetchController.signal })
-            .then(res => res.ok ? res.blob() : Promise.reject())
-            .then(blob => {
-                if (token !== this.playToken) return; // Đã đổi luồng đọc khác
-                if (this.nextAudioCache.blobUrl) {
-                    URL.revokeObjectURL(this.nextAudioCache.blobUrl);
-                }
-                this.nextAudioCache = {
-                    index: nextIndex,
-                    blobUrl: URL.createObjectURL(blob)
-                };
-            })
-            .catch(() => {}); // Tải ngầm thất bại thì lúc đọc thật sẽ tải lại sau
+    cleanOldAudioBlobs(currentIndex) {
+        if (!this.audioBlobCache) return;
+        for (const [idx, url] of this.audioBlobCache.entries()) {
+            if (idx < currentIndex - 1 || idx > currentIndex + 5) {
+                try { URL.revokeObjectURL(url); } catch(e) {}
+                this.audioBlobCache.delete(idx);
+            }
+        }
     },
 
     togglePlayPause() {
@@ -316,10 +342,7 @@ const TTSEngine = {
     prevParagraph() {
         if (this.sentences.length === 0) return;
         this.currentIndex = Math.max(0, this.currentIndex - 2);
-        if (this.nextAudioCache.blobUrl) {
-            URL.revokeObjectURL(this.nextAudioCache.blobUrl);
-            this.nextAudioCache = { index: -1, blobUrl: null };
-        }
+        this.cleanOldAudioBlobs(this.currentIndex);
         if (this.status === 'PLAYING') {
             if (this.audioPlayer) { this.audioPlayer.pause(); this.audioPlayer.removeAttribute('src'); }
             if (this.synth) this.synth.cancel();
@@ -332,10 +355,7 @@ const TTSEngine = {
     nextParagraph() {
         if (this.sentences.length === 0) return;
         this.currentIndex = Math.min(this.sentences.length - 1, this.currentIndex + 1);
-        if (this.nextAudioCache.blobUrl) {
-            URL.revokeObjectURL(this.nextAudioCache.blobUrl);
-            this.nextAudioCache = { index: -1, blobUrl: null };
-        }
+        this.cleanOldAudioBlobs(this.currentIndex);
         if (this.status === 'PLAYING') {
             if (this.audioPlayer) { this.audioPlayer.pause(); this.audioPlayer.removeAttribute('src'); }
             if (this.synth) this.synth.cancel();
@@ -512,10 +532,7 @@ const TTSEngine = {
         }
         this.sleepAfterChapter = false;
 
-        if (this.nextAudioCache && this.nextAudioCache.blobUrl) {
-            URL.revokeObjectURL(this.nextAudioCache.blobUrl);
-            this.nextAudioCache = { index: -1, blobUrl: null };
-        }
+        this.clearAudioBlobCache();
 
         if (this.audioPlayer) {
             this.audioPlayer.onended = null;
@@ -563,7 +580,8 @@ const TTSEngine = {
                             this.updateStatusText('Đã đọc hết truyện');
                             return;
                         }
-                        setTimeout(() => this.start(), 300);
+                        const unthrottledTimer = window.unthrottledTimeout || window.setTimeout;
+                        unthrottledTimer(() => this.start(), 300);
                     }).catch(err => {
                         console.error('Error turning page', err);
                         this.stop();
@@ -608,7 +626,10 @@ const TTSEngine = {
             let audioSrc = `/api/tts/speak?text=${encodeURIComponent(cleanedText)}&lang=vi`;
             let isFromCache = false;
 
-            if (this.nextAudioCache && this.nextAudioCache.index === this.currentIndex && this.nextAudioCache.blobUrl) {
+            if (this.audioBlobCache && this.audioBlobCache.has(this.currentIndex)) {
+                audioSrc = this.audioBlobCache.get(this.currentIndex);
+                isFromCache = true;
+            } else if (this.nextAudioCache && this.nextAudioCache.index === this.currentIndex && this.nextAudioCache.blobUrl) {
                 audioSrc = this.nextAudioCache.blobUrl;
                 isFromCache = true;
             }
@@ -621,10 +642,7 @@ const TTSEngine = {
                 if (this.playToken !== currentToken) return;
                 if (this.status !== 'PLAYING') return;
                 this.errorCount = 0;
-                if (isFromCache && this.nextAudioCache.blobUrl) {
-                    URL.revokeObjectURL(this.nextAudioCache.blobUrl);
-                    this.nextAudioCache = { index: -1, blobUrl: null };
-                }
+                this.cleanOldAudioBlobs(this.currentIndex);
                 this.currentIndex++;
                 this.speakSentenceQueue();
             };
@@ -632,14 +650,11 @@ const TTSEngine = {
             this.audioPlayer.onerror = (e) => {
                 if (this.playToken !== currentToken) return;
                 console.error('Audio playback error', e);
-                if (isFromCache && this.nextAudioCache.blobUrl) {
-                    URL.revokeObjectURL(this.nextAudioCache.blobUrl);
-                    this.nextAudioCache = { index: -1, blobUrl: null };
-                }
                 this.errorCount++;
                 if (this.errorCount >= 2) {
                     console.warn(`Lỗi tải câu ${this.currentIndex + 1} sau 2 lần thử lại, tự động lướt qua câu tiếp theo.`);
                     this.errorCount = 0;
+                    this.cleanOldAudioBlobs(this.currentIndex);
                     this.currentIndex++;
                     setTimeout(() => {
                         if (this.status === 'PLAYING' && this.playToken === currentToken) {
@@ -661,8 +676,8 @@ const TTSEngine = {
             if (playPromise !== undefined) {
                 playPromise.then(() => {
                     if (this.playToken !== currentToken) return;
-                    // Ngay khi play thành công cho câu currentIndex, tải ngầm ngay câu tiếp theo
-                    this.prefetchNextSentence(this.currentIndex + 1, currentToken);
+                    // Tải ngầm 2 câu tiếp theo ngay lập tức để chuyển câu mượt mà
+                    this.prefetchNextSentences(this.currentIndex, currentToken);
                 }).catch(err => {
                     if (this.playToken !== currentToken) return;
                     if (err.name === 'AbortError') return;
@@ -868,9 +883,35 @@ const TTSEngine = {
         return result;
     },
 
+    applyTextFilters(text) {
+        if (!text) return '';
+        let rules = [];
+        try {
+            if (typeof Reader !== 'undefined' && Reader.getReplaceRules) {
+                rules = Reader.getReplaceRules();
+            } else {
+                const raw = localStorage.getItem('dreader_replace_rules');
+                if (raw) rules = JSON.parse(raw);
+            }
+        } catch(e) {}
+
+        if (Array.isArray(rules)) {
+            for (const r of rules) {
+                if (!r || !r.pattern || r.enabled === false) continue;
+                try {
+                    const regex = new RegExp(r.pattern, r.flags || 'gi');
+                    text = text.replace(regex, r.replacement ?? '');
+                } catch(e) {
+                    text = text.split(r.pattern).join(r.replacement ?? '');
+                }
+            }
+        }
+        return text;
+    },
+
     sanitizeText(text) {
         if (!text) return '';
-        let cleaned = text;
+        let cleaned = this.applyTextFilters(text);
         cleaned = cleaned.replace(/<[^>]*>?/gm, '');
 
         // Bỏ hẳn dấu ngoặc kép/nháy đơn kiểu chữ - không cần đọc thành lời,
@@ -892,33 +933,60 @@ const TTSEngine = {
         return cleaned;
     },
 
-    scrollToHighlightSafely(spanElement) {
+    scrollToHighlight(spanElement) {
+        if (typeof window.checkDReaderAutoScroll === 'function') {
+            window.checkDReaderAutoScroll();
+            return;
+        }
         if (!spanElement) return;
 
-        const rect = spanElement.getBoundingClientRect();
-        const win = spanElement.ownerDocument?.defaultView || window;
-        const viewHeight = win.innerHeight || document.documentElement.clientHeight;
+        const iframeDoc = spanElement.ownerDocument;
+        const iframeWin = iframeDoc ? iframeDoc.defaultView : null;
+        const iframeEl = iframeWin ? iframeWin.frameElement : null;
 
-        // Vùng an toàn: Cách mép trên 15% (tránh thanh Toolbar) và cách mép dưới 28% (tránh thanh Audio)
-        const topSafeBound = viewHeight * 0.15;
-        const bottomSafeBound = viewHeight * 0.72;
+        // Tìm đúng khung chứa có thanh cuộn của epub.js (.epub-container)
+        const scrollContainer = document.querySelector('.epub-container') 
+                             || document.getElementById('viewer') 
+                             || document.scrollingElement;
 
-        // Nếu câu đang đọc vẫn nằm gọn trong vùng nhìn thấy an toàn -> KHÔNG cuộn để tránh giật màn hình
-        if (rect.top >= topSafeBound && rect.bottom <= bottomSafeBound) {
+        if (!iframeEl || !scrollContainer) {
+            spanElement.scrollIntoView({ behavior: 'auto', block: 'center' });
             return;
         }
 
-        const rateInput = document.getElementById('inputTtsRate');
-        const currentRate = this.rate || (window.Reader && Reader.settings ? Reader.settings.ttsRate : null) || (rateInput ? parseFloat(rateInput.value) : 1.0);
+        // Tọa độ của câu đang đọc so với đỉnh của iframe
+        const spanRect = spanElement.getBoundingClientRect();
+        // Tọa độ của iframe so với màn hình hiện tại (sẽ mang giá trị âm khi cuộn xuống)
+        const iframeRect = iframeEl.getBoundingClientRect();
+        // Tọa độ của khung đọc sách trên màn hình
+        const containerRect = scrollContainer.getBoundingClientRect();
 
-        // Nếu tốc độ đọc >= 2.0x (như 3.0x), dùng cuộn tức thì ('auto') thay vì 'smooth' để không bị trễ nhịp
-        const scrollBehavior = (currentRate && currentRate >= 2.0) ? 'auto' : 'smooth';
+        // Vị trí thực tế (pixel) của câu đang đọc trên màn hình hiển thị của bạn
+        const visualTopInContainer = (iframeRect.top + spanRect.top) - containerRect.top;
+        const visualBottomInContainer = visualTopInContainer + spanRect.height;
 
-        spanElement.scrollIntoView({
-            behavior: scrollBehavior,
-            block: 'center',
-            inline: 'nearest'
-        });
+        // Giới hạn vùng an toàn: cách mép trên 80px và cách mép dưới 180px (tránh thanh Audio dưới đáy)
+        const topLimit = 80;
+        const bottomLimit = containerRect.height - 180;
+
+        // Nếu câu màu vàng vượt xuống dưới vùng an toàn (hoặc bị khuất ở trên) -> Kéo thanh cuộn ngay!
+        if (visualBottomInContainer > bottomLimit || visualTopInContainer < topLimit) {
+            // Đưa câu đang đọc về vị trí 1/3 phía trên màn hình để mắt dễ theo dõi các câu tiếp theo
+            const targetScrollTop = scrollContainer.scrollTop + visualTopInContainer - (containerRect.height * 0.32);
+
+            const rateInput = document.getElementById('inputTtsRate');
+            const currentRate = this.rate || (window.Reader && Reader.settings ? Reader.settings.ttsRate : null) || (rateInput ? parseFloat(rateInput.value) : 1.0);
+
+            scrollContainer.scrollTo({
+                top: Math.max(0, targetScrollTop),
+                // Ở tốc độ cao (>= 2.0x như 3.0x), cuộn tức thì để chữ không bị trôi chậm hơn tiếng
+                behavior: (currentRate && currentRate >= 2.0) ? 'auto' : 'smooth'
+            });
+        }
+    },
+
+    scrollToHighlightSafely(spanElement) {
+        this.scrollToHighlight(spanElement);
     },
 
     highlightSentence(sentenceText) {
@@ -969,10 +1037,11 @@ const TTSEngine = {
                     parent.replaceChild(span, node);
                     span.appendChild(node);
                     this.highlightElement = span;
+                    this.currentHighlightSpan = span;
                     this.lastHighlightNode = parent;
 
                     if (Reader.settings.autoScroll !== false) {
-                        this.scrollToHighlightSafely(span);
+                        this.scrollToHighlight(span);
                     }
                 }
             }
@@ -982,37 +1051,42 @@ const TTSEngine = {
     },
 
     clearHighlight(doc) {
-        let docs = [];
-        if (doc) {
+        // 1. Lấy toàn bộ document bên trong các iframe đang mở của epub.js và trang chính
+        const docs = [];
+        if (doc && doc.querySelectorAll) {
             docs.push(doc);
-        } else if (window.Reader && Reader.rendition?.getContents) {
+        }
+        if (window.Reader && Reader.rendition && typeof Reader.rendition.getContents === 'function') {
             try {
-                const contents = Reader.rendition.getContents();
-                if (contents && contents.length > 0) {
-                    contents.forEach(c => { if (c.document) docs.push(c.document); });
-                }
+                Reader.rendition.getContents().forEach(content => {
+                    if (content && content.document && !docs.includes(content.document)) {
+                        docs.push(content.document);
+                    }
+                });
             } catch (e) {}
         }
-        if (docs.length === 0) {
-            const defaultDoc = window.Reader?.getCurrentIframeDoc ? Reader.getCurrentIframeDoc() : document;
-            if (defaultDoc) docs.push(defaultDoc);
-        }
+        try {
+            const iframes = document.querySelectorAll('#viewer iframe, .epub-container iframe');
+            iframes.forEach(iframe => {
+                const idoc = iframe.contentDocument || iframe.contentWindow?.document;
+                if (idoc && !docs.includes(idoc)) docs.push(idoc);
+            });
+        } catch (e) {}
+        if (!docs.includes(document)) docs.push(document);
 
+        // 2. Mở bọc (unwrap) toàn bộ thẻ .tts-karaoke-highlight (KHÔNG gọi parent.normalize())
         docs.forEach(targetDoc => {
             try {
-                const highlights = targetDoc.querySelectorAll('.tts-karaoke-highlight');
-                highlights.forEach(span => {
+                const highlightedNodes = targetDoc.querySelectorAll('.tts-karaoke-highlight');
+                highlightedNodes.forEach(span => {
+                    span.classList.remove('tts-karaoke-highlight');
                     const parent = span.parentNode;
-                    if (!parent) return;
-
-                    // Đưa toàn bộ text bên trong <span> ra ngoài trả lại vị trí cũ
-                    while (span.firstChild) {
-                        parent.insertBefore(span.firstChild, span);
+                    if (parent) {
+                        while (span.firstChild) {
+                            parent.insertBefore(span.firstChild, span);
+                        }
+                        parent.removeChild(span);
                     }
-                    parent.removeChild(span);
-
-                    // QUAN TRỌNG NHẤT: Gộp các TextNode bị cắt rời thành 1 TextNode nguyên vẹn như ban đầu
-                    parent.normalize();
                 });
             } catch (e) {
                 console.error('Clear highlight error', e);
@@ -1020,6 +1094,7 @@ const TTSEngine = {
         });
 
         this.highlightElement = null;
+        this.currentHighlightSpan = null;
     },
 
     removeHighlight(doc) {
@@ -1064,3 +1139,331 @@ const TTSEngine = {
 
 // Aliasing for compatibility
 const TTS = TTSEngine;
+
+/* ==========================================================================
+   AUTO-SCROLL CHO D_READER — bám theo câu đang đọc (.tts-karaoke-highlight)
+   Nguyên tắc:
+   - Thanh cuộn thật của chế độ scrolled-doc là .epub-container (epub.js tạo ra),
+     lấy trực tiếp từ Reader.rendition.manager.container, KHÔNG dò đoán.
+   - Tính vị trí theo CÂU đang đọc (Range), không theo cả đoạn văn.
+   ========================================================================== */
+(function initDReaderAutoScroll() {
+    let lastSpan = null;
+    let rafId = null;
+
+    function getScroller() {
+        const mgr = window.Reader && Reader.rendition && Reader.rendition.manager;
+        if (mgr && mgr.container) return mgr.container;
+        return document.querySelector('#viewer .epub-container') || document.getElementById('viewer');
+    }
+
+    // Toạ độ (theo viewport của iframe) của riêng câu đang đọc
+    function getSentenceRect(span) {
+        try {
+            const sent = TTSEngine.sentences[TTSEngine.currentIndex];
+            const textNode = span.firstChild;
+            if (sent && textNode && textNode.nodeType === 3) {
+                const sub = (sent.raw || '').substring(0, 25).trim();
+                const start = sub ? textNode.nodeValue.indexOf(sub) : -1;
+                if (start >= 0) {
+                    const end = Math.min(textNode.nodeValue.length, start + sent.raw.length);
+                    const range = span.ownerDocument.createRange();
+                    range.setStart(textNode, start);
+                    range.setEnd(textNode, end);
+                    const rects = range.getClientRects();
+                    if (rects.length > 0) {
+                        return { top: rects[0].top, bottom: rects[rects.length - 1].bottom };
+                    }
+                }
+            }
+        } catch (e) { /* rơi xuống dùng rect của cả span */ }
+        const b = span.getBoundingClientRect();
+        return { top: b.top, bottom: b.bottom };
+    }
+
+    function animateScrollTo(el, targetTop, duration) {
+        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+        const startTop = el.scrollTop;
+        const delta = targetTop - startTop;
+        if (Math.abs(delta) < 2) return;
+        if (duration <= 0) { el.scrollTop = targetTop; return; }
+        const t0 = performance.now();
+        function step(now) {
+            const p = Math.min(1, (now - t0) / duration);
+            el.scrollTop = startTop + delta * (1 - Math.pow(1 - p, 3));
+            rafId = p < 1 ? requestAnimationFrame(step) : null;
+        }
+        rafId = requestAnimationFrame(step);
+    }
+
+    function checkAndScrollToHighlight(force) {
+        if (window.Reader && Reader.settings && Reader.settings.autoScroll === false) return;
+        if (TTSEngine.status !== 'PLAYING') return;
+
+        const scroller = getScroller();
+        if (!scroller) return;
+
+        for (const iframeEl of scroller.querySelectorAll('iframe')) {
+            let doc;
+            try { doc = iframeEl.contentDocument; } catch (e) { continue; }
+            if (!doc) continue;
+
+            const span = doc.querySelector('.tts-karaoke-highlight');
+            if (!span) continue;
+            if (force !== true && span === lastSpan) return; // câu này đã xử lý rồi
+            lastSpan = span;
+
+            const sr = getSentenceRect(span);
+            const iframeTop = iframeEl.getBoundingClientRect().top;
+            const scrollerTop = scroller.getBoundingClientRect().top;
+            const viewH = scroller.clientHeight;
+
+            // Vị trí câu so với mép trên của khung cuộn
+            const top = iframeTop + sr.top - scrollerTop;
+            const bottom = iframeTop + sr.bottom - scrollerTop;
+
+            // Vùng an toàn theo tỉ lệ: 12% trên - 72% dưới
+            if (bottom > viewH * 0.72 || top < viewH * 0.12) {
+                const rate = (window.TTSEngine && TTSEngine.rate) || 1;
+                const maxTop = Math.max(0, scroller.scrollHeight - viewH);
+                const target = Math.min(maxTop, Math.max(0, scroller.scrollTop + top - viewH * 0.30));
+                animateScrollTo(scroller, target, rate >= 2 ? 0 : 160);
+            }
+            return;
+        }
+    }
+
+    // TTSEngine.scrollToHighlight() sẽ gọi hàm này ngay khi tô câu mới
+    window.checkDReaderAutoScroll = checkAndScrollToHighlight;
+
+    // Lưới an toàn: quét định kỳ phòng khi span được tạo mà không đi qua scrollToHighlight
+    setInterval(checkAndScrollToHighlight, 150);
+})();
+
+/* ==========================================================================
+   BACKGROUND KEEP-ALIVE CHO D_READER (CHỐNG NGẮT KHI CHUYỂN SANG TAB KHÁC)
+   ========================================================================== */
+(function initDReaderBackgroundKeepAlive() {
+    // 1. Tạo Web Worker Timer (Không bao giờ bị Chrome/Edge đóng băng khi ẩn tab)
+    const workerCode = `
+        const timers = new Map();
+        self.onmessage = function(e) {
+            const { cmd, id, delay } = e.data;
+            if (cmd === 'setTimeout') {
+                const ref = setTimeout(() => {
+                    timers.delete(id);
+                    self.postMessage({ id });
+                }, delay || 16);
+                timers.set(id, ref);
+            } else if (cmd === 'clear') {
+                if (timers.has(id)) {
+                    clearTimeout(timers.get(id));
+                    timers.delete(id);
+                }
+            }
+        };
+    `;
+    let bgWorker = null;
+    const workerCallbacks = new Map();
+    let seqId = 1;
+
+    try {
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        bgWorker = new Worker(URL.createObjectURL(blob));
+        bgWorker.onmessage = (e) => {
+            const cb = workerCallbacks.get(e.data.id);
+            if (cb) {
+                workerCallbacks.delete(e.data.id);
+                try { cb(performance.now()); } catch (err) { console.error(err); }
+            }
+        };
+    } catch (e) {
+        console.warn('Web Worker timer not available, fallback to window timers:', e);
+    }
+
+    function unthrottledTick(callback, delay = 16) {
+        if (bgWorker) {
+            const id = seqId++;
+            workerCallbacks.set(id, callback);
+            bgWorker.postMessage({ cmd: 'setTimeout', id, delay });
+            return id;
+        }
+        return window.setTimeout(() => callback(performance.now()), delay);
+    }
+
+    window.unthrottledTimeout = unthrottledTick;
+
+    // 2. Vá requestAnimationFrame & Hàng đợi (Queue) của epub.js khi tab bị ẩn
+    const nativeRAF = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (cb => setTimeout(cb, 16));
+    const nativeCAF = window.cancelAnimationFrame ? window.cancelAnimationFrame.bind(window) : (id => clearTimeout(id));
+
+    window.requestAnimationFrame = function (callback) {
+        if (document.hidden) {
+            return unthrottledTick(callback, 16);
+        }
+        return nativeRAF(callback);
+    };
+
+    window.cancelAnimationFrame = function (id) {
+        if (bgWorker && workerCallbacks.has(id)) {
+            workerCallbacks.delete(id);
+            bgWorker.postMessage({ cmd: 'clear', id });
+            return;
+        }
+        clearTimeout(id);
+        return nativeCAF(id);
+    };
+
+    function patchEpubQueues() {
+        const reader = (typeof Reader !== 'undefined' && Reader) ? Reader : window.Reader;
+        if (!reader || !reader.rendition) return;
+
+        const customTick = (cb) => window.requestAnimationFrame(cb);
+        if (reader.rendition.q) {
+            reader.rendition.q.tick = customTick;
+        }
+        if (reader.rendition.manager && reader.rendition.manager.q) {
+            reader.rendition.manager.q.tick = customTick;
+        }
+    }
+
+    // 3. Tạo luồng âm thanh nền siêu nhỏ (Silent AudioContext) để giữ Tab luôn Active
+    let audioCtx = null;
+    let silentOsc = null;
+    let wakeLockSentinel = null;
+
+    function startSilentKeepAlive() {
+        try {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextClass) return;
+
+            if (!audioCtx) {
+                audioCtx = new AudioContextClass();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            if (!silentOsc) {
+                silentOsc = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                // Âm lượng gần bằng 0 (tai không nghe thấy nhưng Chrome vẫn tính là đang phát âm thanh)
+                gainNode.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+                silentOsc.frequency.setValueAtTime(440, audioCtx.currentTime);
+                silentOsc.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                silentOsc.start();
+            }
+        } catch (e) {}
+
+        // Giữ màn hình/CPU không bị hệ thống đưa vào trạng thái ngủ sâu
+        if ('wakeLock' in navigator && !wakeLockSentinel && !document.hidden) {
+            navigator.wakeLock.request('screen').then(lock => {
+                wakeLockSentinel = lock;
+                lock.addEventListener('release', () => { wakeLockSentinel = null; });
+            }).catch(() => {});
+        }
+    }
+
+    function stopSilentKeepAlive() {
+        try {
+            if (silentOsc) {
+                silentOsc.stop();
+                silentOsc.disconnect();
+                silentOsc = null;
+            }
+            if (wakeLockSentinel) {
+                wakeLockSentinel.release().catch(() => {});
+                wakeLockSentinel = null;
+            }
+        } catch (e) {}
+    }
+
+    // 4. Đăng ký MediaSession API (Điều khiển qua phím Media bàn phím & giữ quyền phát nền)
+    function updateMediaSessionState(isPlaying) {
+        if (!('mediaSession' in navigator)) return;
+        try {
+            navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+            if (isPlaying) {
+                const bookTitle = document.querySelector('#currentBookTitle, .current-book-title, #bookTitle')?.textContent?.trim() || 'D_Reader Audio';
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: bookTitle,
+                    artist: 'D_Reader TTS',
+                    album: 'Đọc truyện nền'
+                });
+
+                const engine = (typeof TTSEngine !== 'undefined' && TTSEngine) ? TTSEngine : window.TTSEngine;
+                if (engine) {
+                    navigator.mediaSession.setActionHandler('play', () => engine.resume && engine.resume());
+                    navigator.mediaSession.setActionHandler('pause', () => engine.pause && engine.pause());
+                    navigator.mediaSession.setActionHandler('previoustrack', () => (engine.prevParagraph ? engine.prevParagraph() : (engine.prevSentence && engine.prevSentence())));
+                    navigator.mediaSession.setActionHandler('nexttrack', () => (engine.nextParagraph ? engine.nextParagraph() : (engine.nextSentence && engine.nextSentence())));
+                }
+            }
+        } catch (e) {}
+    }
+
+    // 5. Mở khóa AudioContext ngay khi người dùng bấm nút Play hoặc click vào trang
+    ['click', 'keydown', 'touchstart'].forEach(evtName => {
+        document.addEventListener(evtName, () => {
+            const engine = (typeof TTSEngine !== 'undefined' && TTSEngine) ? TTSEngine : window.TTSEngine;
+            if (engine && (engine.status === 'PLAYING' || engine.status === 'LOADING' || engine.isPlaying) && !engine.isPaused) {
+                startSilentKeepAlive();
+            } else if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume().catch(() => {});
+            }
+        }, { passive: true });
+    });
+
+    // 6. Khi người dùng chuyển sang tab khác (visibilitychange), ép chạy tiếp hàng đợi epub.js
+    document.addEventListener('visibilitychange', () => {
+        patchEpubQueues();
+        const engine = (typeof TTSEngine !== 'undefined' && TTSEngine) ? TTSEngine : window.TTSEngine;
+        if (!engine || (!engine.isPlaying && engine.status !== 'LOADING') || engine.isPaused) return;
+
+        startSilentKeepAlive();
+
+        const reader = (typeof Reader !== 'undefined' && Reader) ? Reader : window.Reader;
+        if (reader && reader.rendition) {
+            if (reader.rendition.q && reader.rendition.q.running) {
+                reader.rendition.q.run();
+            }
+            if (reader.rendition.manager?.q && reader.rendition.manager.q.running) {
+                reader.rendition.manager.q.run();
+            }
+        }
+    });
+
+    // 7. Vòng lặp canh gác chạy ngầm mỗi 800ms bằng Web Worker
+    function backgroundWatchdog() {
+        patchEpubQueues();
+        const engine = (typeof TTSEngine !== 'undefined' && TTSEngine) ? TTSEngine : window.TTSEngine;
+
+        if (engine && (engine.status === 'PLAYING' || engine.status === 'LOADING' || engine.isPlaying) && !engine.isPaused) {
+            startSilentKeepAlive();
+            updateMediaSessionState(true);
+
+            // Chống lỗi Chrome tự pause speechSynthesis sau 15 giây ở dưới nền
+            if ('speechSynthesis' in window && window.speechSynthesis.speaking && window.speechSynthesis.paused) {
+                window.speechSynthesis.resume();
+            }
+
+            // Nếu đang ở tab ẩn mà hàng đợi epub.js bị kẹt khi chuyển chương -> Kích hoạt chạy tiếp
+            if (document.hidden) {
+                const reader = (typeof Reader !== 'undefined' && Reader) ? Reader : window.Reader;
+                if (reader && reader.rendition?.q && reader.rendition.q._q && reader.rendition.q._q.length > 0 && !reader.rendition.q.paused) {
+                    reader.rendition.q.run();
+                }
+                if (reader && reader.rendition?.manager?.q && reader.rendition.manager.q._q && reader.rendition.manager.q._q.length > 0 && !reader.rendition.manager.q.paused) {
+                    reader.rendition.manager.q.run();
+                }
+            }
+        } else {
+            stopSilentKeepAlive();
+            updateMediaSessionState(false);
+        }
+
+        unthrottledTick(backgroundWatchdog, 800);
+    }
+
+    unthrottledTick(backgroundWatchdog, 800);
+})();

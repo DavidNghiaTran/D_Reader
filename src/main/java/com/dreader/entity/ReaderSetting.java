@@ -55,6 +55,9 @@ public class ReaderSetting {
     @Column(name = "highlight_enabled")
     private Boolean highlightEnabled = true;
 
+    @Column(name = "replace_rules", columnDefinition = "TEXT")
+    private String replaceRules = "[]";
+
     @Column(name = "updated_at", insertable = false, updatable = false)
     private LocalDateTime updatedAt;
 
@@ -107,6 +110,9 @@ public class ReaderSetting {
 
     public Boolean getHighlightEnabled() { return highlightEnabled; }
     public void setHighlightEnabled(Boolean highlightEnabled) { this.highlightEnabled = highlightEnabled; }
+
+    public String getReplaceRules() { return replaceRules; }
+    public void setReplaceRules(String replaceRules) { this.replaceRules = replaceRules; }
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }

@@ -7,6 +7,7 @@ const Library = {
     books: [],
     activeFilter: 'all',
     searchDebounceTimer: null,
+    SUPPORTED_EXTENSIONS: ['.epub', '.pdf', '.mobi', '.azw3', '.txt', '.docx'],
 
     // Gradient palette for typography covers (when no image available)
     COVER_GRADIENTS: [
@@ -119,9 +120,12 @@ const Library = {
         if (dropzone) {
             dropzone.innerHTML = `
                 <i class="ri-file-upload-line"></i>
-                <p>Kéo và thả tệp <strong>.epub</strong> vào đây<br>hoặc <strong>nhấn để chọn tệp</strong></p>
-                <p style="font-size:0.75rem;margin-top:0.5rem;opacity:0.6;">Hỗ trợ tối đa 50MB</p>
-                <input type="file" id="fileInput" accept=".epub" hidden>
+                <p>Kéo và thả sách vào đây<br>hoặc <strong>nhấn để chọn tệp</strong></p>
+                <div class="dropzone-formats">
+                    <span>EPUB</span><span>PDF</span><span>MOBI</span><span>AZW3</span><span>TXT</span><span>DOCX</span>
+                </div>
+                <p style="font-size:0.75rem;margin-top:0.45rem;opacity:0.65;">Hỗ trợ tối đa 150MB — Tự động tách chương &amp; đồng bộ TTS</p>
+                <input type="file" id="fileInput" accept=".epub,.pdf,.mobi,.azw3,.txt,.docx" hidden>
             `;
             const newFileInput = dropzone.querySelector('#fileInput');
             if (newFileInput) {
@@ -233,11 +237,19 @@ const Library = {
 
         // Status filter
         if (this.activeFilter === 'reading') {
-            filtered = filtered.filter(b => (b.progressPercentage || 0) > 0 && (b.progressPercentage || 0) < 99.9);
+            filtered = filtered.filter(b => {
+                const pct = Number(b.progressPercentage || 0);
+                const hasStarted = pct > 0 || !!b.chapterTitle || (typeof b.chapterIndex === 'number' && b.chapterIndex > 0) || !!b.currentCfi;
+                return hasStarted && pct < 99.0;
+            });
         } else if (this.activeFilter === 'unread') {
-            filtered = filtered.filter(b => (b.progressPercentage || 0) === 0);
+            filtered = filtered.filter(b => {
+                const pct = Number(b.progressPercentage || 0);
+                const hasStarted = pct > 0 || !!b.chapterTitle || (typeof b.chapterIndex === 'number' && b.chapterIndex > 0) || !!b.currentCfi;
+                return !hasStarted;
+            });
         } else if (this.activeFilter === 'done') {
-            filtered = filtered.filter(b => (b.progressPercentage || 0) >= 99.9);
+            filtered = filtered.filter(b => (b.progressPercentage || 0) >= 99.0);
         }
 
         // Sort
@@ -260,6 +272,29 @@ const Library = {
         return this.COVER_GRADIENTS[hash % this.COVER_GRADIENTS.length];
     },
 
+    /** Tạo bìa sách đồ họa typographic sang trọng khi không có ảnh bìa hoặc ảnh lỗi */
+    generateFallbackCoverHtml(book) {
+        const [g1, g2] = this.getCoverGradient(book);
+        const title = this.escHtml(book.title || 'Không có tiêu đề');
+        const author = this.escHtml(book.author || 'Chưa rõ tác giả');
+        const words = (book.title || 'D').trim().split(/\s+/);
+        const initials = ((words[0] ? words[0][0] : 'D') + (words[1] ? words[1][0] : '')).toUpperCase();
+
+        return `
+            <div class="cover-placeholder-gradient" style="background:linear-gradient(145deg, ${g1}, ${g2});position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;padding:1rem;box-sizing:border-box;color:#fff;overflow:hidden;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.18);">
+                <div style="display:flex;justify-content:flex-end;align-items:center;">
+                    <span style="font-size:1.05rem;font-weight:800;opacity:0.75;letter-spacing:1px;">${initials}</span>
+                </div>
+                <div style="flex:1;display:flex;align-items:center;justify-content:center;margin:0.4rem 0;">
+                    <div style="font-size:0.88rem;font-weight:700;line-height:1.35;text-align:center;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;text-shadow:0 1px 3px rgba(0,0,0,0.35);">${title}</div>
+                </div>
+                <div style="font-size:0.72rem;opacity:0.88;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-top:1px solid rgba(255,255,255,0.22);padding-top:0.35rem;">
+                    ${author}
+                </div>
+            </div>
+        `;
+    },
+
     render(booksToRender) {
         const grid = document.getElementById('bookGrid');
         if (!grid) return;
@@ -271,7 +306,7 @@ const Library = {
                 <div class="empty-state">
                     <i class="ri-book-2-line"></i>
                     <h3>Chưa có sách nào</h3>
-                    <p>Nhấn <strong>Tải sách EPUB</strong> để thêm sách mới vào thư viện</p>
+                    <p>Nhấn <strong>Tải sách mới</strong> để thêm sách (.epub, .pdf, .mobi, .azw3, .txt, .docx) vào thư viện</p>
                 </div>`;
             return;
         }
@@ -281,32 +316,58 @@ const Library = {
             card.className = 'book-card';
             card.setAttribute('data-book-id', book.id);
 
-            const progressPct = (book.progressPercentage || 0).toFixed(1);
-            const [g1, g2] = this.getCoverGradient(book);
+            const pct = parseFloat((book.progressPercentage || 0).toFixed(1));
+            const hasStarted = (pct > 0 || !!book.chapterTitle || (typeof book.chapterIndex === 'number' && book.chapterIndex > 0) || !!book.currentCfi);
+            const isCompleted = pct >= 99.0;
+
+            let statusLabel = 'Chưa đọc';
+            let statusBadgeColor = 'var(--text-muted)';
+            let statusBadgeBg = 'var(--bg-secondary)';
+
+            if (isCompleted) {
+                statusLabel = 'Hoàn thành';
+                statusBadgeColor = '#10b981';
+                statusBadgeBg = 'rgba(16,185,129,0.12)';
+            } else if (hasStarted) {
+                statusLabel = 'Đang đọc';
+                statusBadgeColor = 'var(--accent)';
+                statusBadgeBg = 'var(--accent-soft)';
+            }
+
+            // Chi tiết số chương
+            let progressDetail = '';
+            if (book.totalChapters && typeof book.chapterIndex === 'number' && book.chapterIndex > 0) {
+                progressDetail = `Chương ${book.chapterIndex}/${book.totalChapters}`;
+            } else if (book.totalChapters) {
+                progressDetail = `${book.totalChapters} chương`;
+            }
+
+            // Định dạng gốc (EPUB, PDF, MOBI, AZW3, TXT, DOCX)
+            const origFmt = (book.originalFormat || 'EPUB').toUpperCase();
+            const fmtBadgeHtml = `<span class="book-format-badge format-${origFmt.toLowerCase()}">${this.escHtml(origFmt)}</span>`;
 
             // 3D book cover or typography placeholder
             const coverHtml = book.coverPath
-                ? `<img class="cover-img" src="/api/books/${book.id}/cover" alt="${this.escHtml(book.title)}" loading="lazy" onerror="this.parentElement.innerHTML=\`<div class='cover-placeholder-gradient' style='background:linear-gradient(135deg,${g1},${g2});position:absolute;inset:0;'></div><div class='cover-placeholder-content'><i class='ri-book-open-line'></i><div class='cover-placeholder-title'>${this.escHtml(book.title)}</div><div class='cover-placeholder-author'>${this.escHtml(book.author || '')}</div></div>\`">`
-                : `<div class="cover-placeholder-gradient" style="background:linear-gradient(135deg,${g1},${g2});position:absolute;inset:0;"></div>
-                   <div class="cover-placeholder-content">
-                       <i class="ri-book-open-line"></i>
-                       <div class="cover-placeholder-title">${this.escHtml(book.title)}</div>
-                       <div class="cover-placeholder-author">${this.escHtml(book.author || '')}</div>
-                   </div>`;
+                ? `<img class="cover-img" src="/api/books/${book.id}/cover" alt="${this.escHtml(book.title)}" loading="lazy" onerror="this.outerHTML=Library.generateFallbackCoverHtml(${JSON.stringify(book).replace(/"/g, '&quot;')})">`
+                : this.generateFallbackCoverHtml(book);
 
             card.innerHTML = `
-                <div class="cover-wrapper">${coverHtml}</div>
+                <div class="cover-wrapper">${coverHtml}${fmtBadgeHtml}</div>
                 <div class="book-info">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem;">
+                        <span style="font-size:0.72rem;font-weight:600;padding:2px 8px;border-radius:12px;background:${statusBadgeBg};color:${statusBadgeColor};">${statusLabel}</span>
+                        ${progressDetail ? `<span style="font-size:0.72rem;color:var(--text-muted);font-weight:500;">${progressDetail}</span>` : ''}
+                    </div>
                     <h3 class="book-title" title="${this.escHtml(book.title)}">${this.escHtml(book.title)}</h3>
                     <p class="book-author">${this.escHtml(book.author || 'Chưa rõ tác giả')}</p>
                     <div class="progress-section">
                         ${book.chapterTitle ? `<div class="book-chapter-badge" title="${this.escHtml(book.chapterTitle)}"><i class="ri-book-mark-line"></i> Đang đọc: ${this.escHtml(book.chapterTitle)}</div>` : ''}
                         <div class="progress-bar-bg">
-                            <div class="progress-bar-fill" style="width:${progressPct}%"></div>
+                            <div class="progress-bar-fill" style="width:${isCompleted ? 100 : (pct > 0 ? pct : (hasStarted ? 2 : 0))}%"></div>
                         </div>
                         <div class="progress-text">
-                            <span>${progressPct > 0 ? 'Tiến độ' : 'Chưa đọc'}</span>
-                            <span>${progressPct}%</span>
+                            <span>${hasStarted ? (isCompleted ? '100%' : `${pct}%`) : '0%'}</span>
+                            <span>${isCompleted ? 'Đã xong' : (hasStarted ? 'Tiếp tục' : 'Bắt đầu')}</span>
                         </div>
                     </div>
                 </div>
@@ -340,21 +401,32 @@ const Library = {
 
     /** Upload file with real XHR progress bar */
     handleFileUpload(file) {
-        if (!file.name.toLowerCase().endsWith('.epub')) {
-            App.showToast('Chỉ hỗ trợ tệp định dạng .epub!', 'error');
+        const lowerName = (file.name || '').toLowerCase();
+        const matchedExt = this.SUPPORTED_EXTENSIONS.find(ext => lowerName.endsWith(ext));
+        if (!matchedExt) {
+            App.showToast('Định dạng không hỗ trợ! Chỉ chấp nhận .epub, .pdf, .mobi, .azw3, .txt, .docx', 'error');
             return;
         }
-        if (file.size > 50 * 1024 * 1024) {
-            App.showToast('Dung lượng tệp vượt quá giới hạn 50MB!', 'error');
+        if (file.size > 150 * 1024 * 1024) {
+            App.showToast('Dung lượng tệp vượt quá giới hạn 150MB!', 'error');
             return;
         }
+
+        const fmtUpper = matchedExt.slice(1).toUpperCase();
+        const isNativeEpub = fmtUpper === 'EPUB';
 
         const progressContainer = document.getElementById('uploadProgress');
         const progressBar = document.getElementById('progressBar');
         const statusEl = document.getElementById('uploadStatus');
         const dropzone = document.getElementById('dropzone');
 
-        if (dropzone) dropzone.innerHTML = `<i class="ri-loader-4-line ri-spin" style="font-size:2.5rem;color:var(--accent);"></i><p style="margin-top:0.5rem;">Đang tải lên và phân tích EPUB...</p>`;
+        if (dropzone) {
+            dropzone.innerHTML = `<i class="ri-loader-4-line ri-spin" style="font-size:2.5rem;color:var(--accent);"></i><p style="margin-top:0.5rem;">${
+                isNativeEpub
+                    ? 'Đang tải lên và phân tích sách EPUB...'
+                    : `Đang tải lên và chuẩn hóa tệp ${fmtUpper} sang EPUB...`
+            }</p>`;
+        }
         if (progressContainer) progressContainer.style.display = 'block';
         if (progressBar) progressBar.style.width = '0%';
         if (statusEl) statusEl.textContent = 'Đang chuẩn bị...';
@@ -368,18 +440,27 @@ const Library = {
             if (e.lengthComputable) {
                 const pct = Math.round((e.loaded / e.total) * 85); // leave 15% for server processing
                 if (progressBar) progressBar.style.width = `${pct}%`;
-                if (statusEl) statusEl.textContent = `Đang tải lên... ${pct}%`;
+                if (statusEl) {
+                    statusEl.textContent = pct >= 84 && !isNativeEpub
+                        ? `Đang tách chương & đóng gói chuẩn EPUB từ tệp ${fmtUpper}...`
+                        : `Đang tải lên... ${pct}%`;
+                }
             }
         };
 
         xhr.onload = () => {
             if (progressBar) progressBar.style.width = '100%';
             if (xhr.status >= 200 && xhr.status < 300) {
-                if (statusEl) statusEl.textContent = 'Hoàn tất! Đang cập nhật thư viện...';
+                const isDuplicate = xhr.getResponseHeader('X-Book-Duplicate') === 'true';
+                if (statusEl) statusEl.textContent = isDuplicate ? 'Sách đã có sẵn trong thư viện!' : 'Hoàn tất! Đang cập nhật thư viện...';
                 setTimeout(() => {
                     this.closeModal();
                     this.loadBooks();
-                    App.showToast('Tải sách lên thành công!', 'success');
+                    if (isDuplicate) {
+                        App.showToast('Sách này đã có sẵn trong thư viện!', 'info');
+                    } else {
+                        App.showToast('Tải sách lên thành công!', 'success');
+                    }
                 }, 500);
             } else {
                 if (statusEl) statusEl.textContent = 'Lỗi: ' + xhr.responseText;

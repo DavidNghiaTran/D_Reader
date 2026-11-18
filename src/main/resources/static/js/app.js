@@ -11,7 +11,31 @@ const App = {
         if (typeof Reader !== 'undefined' && Reader.init) Reader.init();
         if (typeof TTSEngine !== 'undefined' && TTSEngine.init) TTSEngine.init();
 
+        this.bindGlobalActions();
         this.switchView('libraryView');
+    },
+
+    bindGlobalActions() {
+        const handleShutdown = async () => {
+            if (!confirm('Bạn có muốn tắt máy chủ D_Reader và thoát ứng dụng không?')) return;
+            App.showToast('Đang đóng máy chủ D_Reader...', 'info');
+            try {
+                if (typeof Reader !== 'undefined' && Reader.flushSaveProgress) {
+                    Reader.flushSaveProgress(true);
+                }
+            } catch(e) {}
+
+            try {
+                await fetch('/api/health/shutdown', { method: 'POST' });
+            } catch (e) {}
+
+            setTimeout(() => {
+                window.close();
+            }, 600);
+        };
+
+        document.getElementById('btnExitApp')?.addEventListener('click', handleShutdown);
+        document.getElementById('btnReaderExitApp')?.addEventListener('click', handleShutdown);
     },
 
     switchView(viewId) {

@@ -11,7 +11,7 @@ public class Book {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column(length = 500, nullable = false)
     private String title;
 
     @Column(columnDefinition = "VARCHAR(255) DEFAULT 'Chưa rõ tác giả'")
@@ -20,13 +20,13 @@ public class Book {
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    @Column(length = 20)
+    @Column(length = 50)
     private String language = "vi";
 
     @Column(length = 255)
     private String publisher;
 
-    @Column(length = 50)
+    @Column(length = 255)
     private String isbn;
 
     @Column(name = "file_path", nullable = false, length = 500)
@@ -43,6 +43,9 @@ public class Book {
 
     @Column(name = "total_chapters")
     private Integer totalChapters = 0;
+
+    @Column(name = "original_format", length = 20)
+    private String originalFormat = "EPUB";
 
     @Column(name = "processing_status", length = 30)
     private String processingStatus = "READY";
@@ -90,6 +93,9 @@ public class Book {
 
     public Integer getTotalChapters() { return totalChapters; }
     public void setTotalChapters(Integer totalChapters) { this.totalChapters = totalChapters; }
+
+    public String getOriginalFormat() { return originalFormat; }
+    public void setOriginalFormat(String originalFormat) { this.originalFormat = originalFormat; }
 
     public String getProcessingStatus() { return processingStatus; }
     public void setProcessingStatus(String processingStatus) { this.processingStatus = processingStatus; }
